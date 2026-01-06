@@ -40,6 +40,9 @@ class ConfigInteractive:
         # 保存配置
         self.config_manager.save()
 
+        # 显示预期利润和止损金额
+        self._display_profit_loss_summary()
+
         print("\n" + "="*50)
         print("配置完成！")
         print("="*50 + "\n")
@@ -242,6 +245,128 @@ class ConfigInteractive:
         })
 
         print("\n✓ 策略配置完成\n")
+
+    def _display_profit_loss_summary(self):
+        """显示预期利润和止损金额摘要（排除交易成本）"""
+        print("\n" + "="*50)
+        print("【预期利润与止损分析（扣除交易成本）】")
+        print("="*50 + "\n")
+
+        strategy = self.config_manager.config.get('strategy', {})
+        exchange_config = self.config_manager.config.get('exchange', {})
+
+        # 获取基本参数
+        investment = strategy.get('investment', 1000)
+        position_ratio = strategy.get('position_ratio', 0.1)
+        leverage = strategy.get('leverage', 5)
+
+        # 计算单边仓位金额
+        position_value_usdt = investment * position_ratio * leverage
+
+        print(f"基础配置：")
+        print(f"  投资金额: {investment} USDT")
+        print(f"  仓位比例: {position_ratio * 100}%")
+        print(f"  杠杆倍数: {leverage}x")
+        print(f"  单边仓位价值: {position_value_usdt:.2f} USDT")
+        print()
+
+        # 币安合约默认手续费率（假设使用Taker费率）
+        maker_fee_rate = 0.0002  # 0.02%
+        taker_fee_rate = 0.0004  # 0.04%
+        fee_rate = taker_fee_rate  # 使用Taker费率作为保守估计
+
+        # 计算手续费成本（开仓+平仓，共2次交易）
+        total_fee_rate = fee_rate * 2  # 开仓和平仓各一次
+        total_fee_usdt = position_value_usdt * total_fee_rate
+
+        print(f"交易成本估算：")
+        print(f"  单次交易费率: {fee_rate * 100}%")
+        print(f"  双向交易费率（开仓+平仓）: {total_fee_rate * 100}%")
+        print(f"  单边交易手续费: {total_fee_usdt:.2f} USDT")
+        print(f"  双向交易手续费（多空各一单）: {total_fee_usdt * 2:.2f} USDT")
+        print()
+
+        # 计算上涨止盈利润
+        up_threshold_type = strategy.get('up_threshold_type', 'percent')
+        if up_threshold_type == 'percent':
+            up_threshold = strategy.get('up_threshold', 0.02)
+            up_profit_gross = position_value_usdt * up_threshold
+        else:
+            up_atr_multiplier = strategy.get('up_atr_multiplier', 0.9)
+            # 需要ATR值才能计算，这里使用假设的ATR值（约为价格的2%）
+            estimated_atr_ratio = 0.02
+            up_profit_gross = position_value_usdt * estimated_atr_ratio * up_atr_multiplier
+            up_threshold = estimated_atr_ratio * up_atr_multiplier
+
+        # 扣除手续费后的实际利润
+        up_profit_net = up_profit_gross - total_fee_usdt
+
+        print(f"【上涨止盈分析】")
+        print(f"  触发幅度: {up_threshold * 100:.2f}%")
+        print(f"  毛利润: {up_profit_gross:.2f} USDT")
+        print(f"  交易手续费: {total_fee_usdt:.2f} USDT")
+        print(f"  实际净利润（扣除手续费）: {up_profit_net:.2f} USDT")
+        print(f"  净利率: {(up_profit_net / position_value_usdt) * 100:.2f}%")
+        print()
+
+        # 计算下跌止盈利润
+        down_threshold_type = strategy.get('down_threshold_type', 'percent')
+        if down_threshold_type == 'percent':
+            down_threshold = strategy.get('down_threshold', 0.02)
+            down_profit_gross = position_value_usdt * down_threshold
+        else:
+            down_atr_multiplier = strategy.get('down_atr_multiplier', 0.9)
+            down_profit_gross = position_value_usdt * estimated_atr_ratio * down_atr_multiplier
+            down_threshold = estimated_atr_ratio * down_atr_multiplier
+
+        # 扣除手续费后的实际利润
+        down_profit_net = down_profit_gross - total_fee_usdt
+
+        print(f"【下跌止盈分析】")
+        print(f"  触发幅度: {down_threshold * 100:.2f}%")
+        print(f"  毛利润: {down_profit_gross:.2f} USDT")
+        print(f"  交易手续费: {total_fee_usdt:.2f} USDT")
+        print(f"  实际净利润（扣除手续费）: {down_profit_net:.2f} USDT")
+        print(f"  净利率: {(down_profit_net / position_value_usdt) * 100:.2f}%")
+        print()
+
+        # 计算止损金额
+        stop_loss_type = strategy.get('stop_loss_type', 'percent')
+        if stop_loss_type == 'percent':
+            stop_loss_ratio = strategy.get('stop_loss_ratio', 0.05)
+            stop_loss_gross = position_value_usdt * stop_loss_ratio
+        else:
+            stop_loss_atr_multiplier = strategy.get('stop_loss_atr_multiplier', 1.5)
+            stop_loss_gross = position_value_usdt * estimated_atr_ratio * stop_loss_atr_multiplier
+            stop_loss_ratio = estimated_atr_ratio * stop_loss_atr_multiplier
+
+        # 止损时也需要支付手续费，所以实际损失会更大
+        stop_loss_net = stop_loss_gross + total_fee_usdt
+
+        print(f"【止损分析】")
+        print(f"  止损幅度: {stop_loss_ratio * 100:.2f}%")
+        print(f"  止损金额（毛损）: {stop_loss_gross:.2f} USDT")
+        print(f"  交易手续费: {total_fee_usdt:.2f} USDT")
+        print(f"  实际总损失（含手续费）: {stop_loss_net:.2f} USDT")
+        print(f"  总损失率: {(stop_loss_net / position_value_usdt) * 100:.2f}%")
+        print()
+
+        # 盈亏比分析
+        profit_loss_ratio = min(up_profit_net, down_profit_net) / stop_loss_net if stop_loss_net > 0 else 0
+
+        print(f"【盈亏比分析】")
+        print(f"  最小止盈净利润: {min(up_profit_net, down_profit_net):.2f} USDT")
+        print(f"  止损净损失: {stop_loss_net:.2f} USDT")
+        print(f"  盈亏比: {profit_loss_ratio:.2f} (每亏损1USDT，预期盈利{profit_loss_ratio:.2f}USDT)")
+        print()
+
+        print("="*50)
+        print("💡 提示：")
+        print("  - 所有利润已扣除开仓和平仓的手续费")
+        print("  - 止损时也需支付手续费，因此实际损失会更大")
+        print("  - ATR模式下使用估算ATR值（约2%波动），实际ATR值会在运行时更新")
+        print("  - Maker订单费率为0.02%，Taker订单费率为0.04%（此处按Taker保守估算）")
+        print("="*50 + "\n")
 
     def show_config(self):
         """显示当前配置"""
