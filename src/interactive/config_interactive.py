@@ -92,27 +92,104 @@ class ConfigInteractive:
         investment_input = input("请输入投资金额 USDT (默认: 1000): ").strip()
         investment = float(investment_input) if investment_input else 1000
 
-        # 持仓数量
-        position_amount_input = input("请输入单笔持仓数量 (留空则自动计算): ").strip()
-        position_amount = float(position_amount_input) if position_amount_input else 0
+        # 持仓数量（必须手动输入）
+        while True:
+            position_amount_input = input("请输入单笔持仓数量 (必须手动输入，如 0.01): ").strip()
+            try:
+                position_amount = float(position_amount_input)
+                if position_amount <= 0:
+                    print("持仓数量必须大于0")
+                    continue
+                break
+            except ValueError:
+                print("请输入有效的数字")
+                continue
 
-        print("\n【触发阈值配置】")
+        print("\n【ATR指标配置】")
         print("-" * 30)
 
-        # 上涨阈值
-        up_threshold_input = input("请输入上涨触发阈值百分比 (默认: 2，即2%): ").strip()
-        up_threshold = float(up_threshold_input) / 100 if up_threshold_input else 0.02
+        # ATR周期
+        atr_period_input = input("请输入ATR周期 (默认: 14): ").strip()
+        atr_period = int(atr_period_input) if atr_period_input else 14
 
-        # 下跌阈值
-        down_threshold_input = input("请输入下跌触发阈值百分比 (默认: 2，即2%): ").strip()
-        down_threshold = float(down_threshold_input) / 100 if down_threshold_input else 0.02
+        # ATR时间周期
+        atr_timeframe_input = input("请输入ATR时间周期 (1m/5m/15m/1h/4h/1d，默认: 1h): ").strip()
+        atr_timeframe = atr_timeframe_input if atr_timeframe_input else '1h'
+
+        print("\n【上涨止盈配置】")
+        print("-" * 30)
+
+        # 上涨止盈类型
+        while True:
+            up_type_input = input("上涨止盈类型 (percent=百分比, atr=ATR倍数，默认: atr): ").strip().lower()
+            up_threshold_type = up_type_input if up_type_input else 'atr'
+            if up_threshold_type not in ['percent', 'atr']:
+                print("请输入 percent 或 atr")
+                continue
+            break
+
+        up_threshold = 0.02
+        up_atr_multiplier = 0.9
+
+        if up_threshold_type == 'percent':
+            # 上涨百分比
+            up_threshold_input = input("请输入上涨止盈百分比 (默认: 2，即2%): ").strip()
+            up_threshold = float(up_threshold_input) / 100 if up_threshold_input else 0.02
+        else:
+            # 上涨ATR倍数
+            up_atr_input = input("请输入上涨ATR倍数 (默认: 0.9): ").strip()
+            up_atr_multiplier = float(up_atr_input) if up_atr_input else 0.9
+
+        print("\n【下跌止盈配置】")
+        print("-" * 30)
+
+        # 下跌止盈类型
+        while True:
+            down_type_input = input("下跌止盈类型 (percent=百分比, atr=ATR倍数，默认: atr): ").strip().lower()
+            down_threshold_type = down_type_input if down_type_input else 'atr'
+            if down_threshold_type not in ['percent', 'atr']:
+                print("请输入 percent 或 atr")
+                continue
+            break
+
+        down_threshold = 0.02
+        down_atr_multiplier = 0.9
+
+        if down_threshold_type == 'percent':
+            # 下跌百分比
+            down_threshold_input = input("请输入下跌止盈百分比 (默认: 2，即2%): ").strip()
+            down_threshold = float(down_threshold_input) / 100 if down_threshold_input else 0.02
+        else:
+            # 下跌ATR倍数
+            down_atr_input = input("请输入下跌ATR倍数 (默认: 0.9): ").strip()
+            down_atr_multiplier = float(down_atr_input) if down_atr_input else 0.9
+
+        print("\n【止损配置】")
+        print("-" * 30)
+
+        # 止损类型
+        while True:
+            stop_type_input = input("止损类型 (percent=百分比, atr=ATR倍数，默认: atr): ").strip().lower()
+            stop_loss_type = stop_type_input if stop_type_input else 'atr'
+            if stop_loss_type not in ['percent', 'atr']:
+                print("请输入 percent 或 atr")
+                continue
+            break
+
+        stop_loss_ratio = 0.05
+        stop_loss_atr_multiplier = 1.5
+
+        if stop_loss_type == 'percent':
+            # 止损百分比
+            stop_loss_input = input("请输入止损百分比 (默认: 5，即5%): ").strip()
+            stop_loss_ratio = float(stop_loss_input) / 100 if stop_loss_input else 0.05
+        else:
+            # 止损ATR倍数
+            stop_atr_input = input("请输入止损ATR倍数 (默认: 1.5): ").strip()
+            stop_loss_atr_multiplier = float(stop_atr_input) if stop_atr_input else 1.5
 
         print("\n【风险控制配置】")
         print("-" * 30)
-
-        # 止损比例
-        stop_loss_ratio_input = input("请输入止损比例百分比 (默认: 5，即5%): ").strip()
-        stop_loss_ratio = float(stop_loss_ratio_input) / 100 if stop_loss_ratio_input else 0.05
 
         # 最大持仓对数
         max_positions_input = input("请输入最大持仓对数 (默认: 5): ").strip()
@@ -131,9 +208,17 @@ class ConfigInteractive:
             'symbol': symbol,
             'investment': investment,
             'position_amount': position_amount,
+            'up_threshold_type': up_threshold_type,
             'up_threshold': up_threshold,
+            'up_atr_multiplier': up_atr_multiplier,
+            'down_threshold_type': down_threshold_type,
             'down_threshold': down_threshold,
+            'down_atr_multiplier': down_atr_multiplier,
+            'stop_loss_type': stop_loss_type,
             'stop_loss_ratio': stop_loss_ratio,
+            'stop_loss_atr_multiplier': stop_loss_atr_multiplier,
+            'atr_period': atr_period,
+            'atr_timeframe': atr_timeframe,
             'max_positions': max_positions,
             'max_daily_loss': max_daily_loss,
             'max_daily_trades': max_daily_trades
@@ -163,18 +248,50 @@ class ConfigInteractive:
         print("【策略配置】")
         print(f"  交易对: {strategy.get('symbol', 'N/A')}")
         print(f"  投资金额: {strategy.get('investment', 0)} USDT")
-        print(f"  单笔持仓数量: {strategy.get('position_amount', 0) or '自动'}")
+        print(f"  单笔持仓数量: {strategy.get('position_amount', 0)}")
         print()
 
-        # 触发阈值配置
-        print("【触发阈值配置】")
-        print(f"  上涨触发阈值: {strategy.get('up_threshold', 0) * 100}%")
-        print(f"  下跌触发阈值: {strategy.get('down_threshold', 0) * 100}%")
+        # ATR配置
+        print("【ATR指标配置】")
+        print(f"  ATR周期: {strategy.get('atr_period', 14)}")
+        print(f"  ATR时间周期: {strategy.get('atr_timeframe', '1h')}")
+        print()
+
+        # 上涨止盈配置
+        print("【上涨止盈配置】")
+        up_type = strategy.get('up_threshold_type', 'percent')
+        if up_type == 'atr':
+            print(f"  止盈方式: ATR倍数")
+            print(f"  ATR倍数: {strategy.get('up_atr_multiplier', 0.9)}")
+        else:
+            print(f"  止盈方式: 百分比")
+            print(f"  止盈百分比: {strategy.get('up_threshold', 0.02) * 100}%")
+        print()
+
+        # 下跌止盈配置
+        print("【下跌止盈配置】")
+        down_type = strategy.get('down_threshold_type', 'percent')
+        if down_type == 'atr':
+            print(f"  止盈方式: ATR倍数")
+            print(f"  ATR倍数: {strategy.get('down_atr_multiplier', 0.9)}")
+        else:
+            print(f"  止盈方式: 百分比")
+            print(f"  止盈百分比: {strategy.get('down_threshold', 0.02) * 100}%")
+        print()
+
+        # 止损配置
+        print("【止损配置】")
+        stop_type = strategy.get('stop_loss_type', 'percent')
+        if stop_type == 'atr':
+            print(f"  止损方式: ATR倍数")
+            print(f"  ATR倍数: {strategy.get('stop_loss_atr_multiplier', 1.5)}")
+        else:
+            print(f"  止损方式: 百分比")
+            print(f"  止损百分比: {strategy.get('stop_loss_ratio', 0.05) * 100}%")
         print()
 
         # 风险控制配置
         print("【风险控制配置】")
-        print(f"  止损比例: {strategy.get('stop_loss_ratio', 0) * 100}%")
         print(f"  最大持仓对数: {strategy.get('max_positions', 0)}")
         print(f"  每日最大亏损: {strategy.get('max_daily_loss', 0)} USDT")
         print(f"  每日最大交易次数: {strategy.get('max_daily_trades', 0)}")

@@ -36,14 +36,25 @@ class HedgeGridStrategy:
 
         # 策略参数
         self.investment = Decimal(str(config.get('investment', 1000)))  # 投资金额（每个单方向）
-        self.position_amount = Decimal(str(config.get('position_amount', 0)))  # 单笔持仓数量（0表示自动计算）
+        self.position_amount = Decimal(str(config.get('position_amount', 0)))  # 单笔持仓数量（必须手动设置）
 
-        # 触发阈值
-        self.up_threshold = Decimal(str(config.get('up_threshold', 0.02)))  # 上涨触发阈值（2%）
-        self.down_threshold = Decimal(str(config.get('down_threshold', 0.02)))  # 下跌触发阈值（2%）
+        # 触发阈值（支持ATR或百分比）
+        self.up_threshold_type = config.get('up_threshold_type', 'percent')  # 'percent' 或 'atr'
+        self.up_threshold = Decimal(str(config.get('up_threshold', 0.02)))  # 上涨触发阈值
+        self.up_atr_multiplier = Decimal(str(config.get('up_atr_multiplier', 0.9)))  # 上涨ATR倍数
 
-        # 止损参数
-        self.stop_loss_ratio = Decimal(str(config.get('stop_loss_ratio', 0.05)))  # 止损比例（5%）
+        self.down_threshold_type = config.get('down_threshold_type', 'percent')  # 'percent' 或 'atr'
+        self.down_threshold = Decimal(str(config.get('down_threshold', 0.02)))  # 下跌触发阈值
+        self.down_atr_multiplier = Decimal(str(config.get('down_atr_multiplier', 0.9)))  # 下跌ATR倍数
+
+        # 止损参数（支持ATR或百分比）
+        self.stop_loss_type = config.get('stop_loss_type', 'percent')  # 'percent' 或 'atr'
+        self.stop_loss_ratio = Decimal(str(config.get('stop_loss_ratio', 0.05)))  # 止损比例
+        self.stop_loss_atr_multiplier = Decimal(str(config.get('stop_loss_atr_multiplier', 1.5)))  # 止损ATR倍数
+
+        # ATR参数
+        self.atr_period = config.get('atr_period', 14)  # ATR周期（默认14）
+        self.atr_timeframe = config.get('atr_timeframe', '1h')  # ATR时间周期（默认1小时）
 
         # 风险控制参数
         self.max_daily_loss = Decimal(str(config.get('max_daily_loss', 100)))  # 每日最大亏损USDT
@@ -61,6 +72,7 @@ class HedgeGridStrategy:
 
         # 运行状态
         self.is_running = False
+        self.current_atr = Decimal('0')  # 当前ATR值
 
         # 统计数据
         self.total_profit = Decimal('0')
@@ -77,19 +89,91 @@ class HedgeGridStrategy:
         """初始化策略"""
         logger.info("开始初始化双向持仓策略...")
 
-        # 计算单笔持仓数量（如果未设置）
+        # 检查持仓数量
         if self.position_amount <= 0:
-            ticker = await self.exchange.fetch_ticker(self.symbol)
-            current_price = Decimal(str(ticker['last']))
-            # 投资金额平均分配给多单和空单
-            self.position_amount = (self.investment / 2) / current_price
+            raise ValueError("持仓数量必须手动设置且大于0")
+
+        # 计算ATR
+        await self._update_atr()
+        logger.info(f"当前ATR({self.atr_timeframe}, {self.atr_period}周期): {self.current_atr}")
+
+        # 显示止盈止损配置
+        logger.info(f"上涨触发: {self._get_threshold_desc('up')}")
+        logger.info(f"下跌触发: {self._get_threshold_desc('down')}")
+        logger.info(f"止损配置: {self._get_threshold_desc('stop_loss')}")
 
         logger.info(f"单笔持仓数量: {self.position_amount}")
-        logger.info(f"上涨触发阈值: {self.up_threshold * 100}%")
-        logger.info(f"下跌触发阈值: {self.down_threshold * 100}%")
-        logger.info(f"止损比例: {self.stop_loss_ratio * 100}%")
 
         logger.info("双向持仓策略初始化完成")
+
+    def _get_threshold_desc(self, threshold_type: str) -> str:
+        """
+        获取阈值描述
+
+        Args:
+            threshold_type: 'up', 'down', 'stop_loss'
+
+        Returns:
+            阈值描述字符串
+        """
+        if threshold_type == 'up':
+            if self.up_threshold_type == 'atr':
+                return f"ATR × {self.up_atr_multiplier} (约 {self.current_atr * self.up_atr_multiplier:.2f})"
+            else:
+                return f"{self.up_threshold * 100}%"
+        elif threshold_type == 'down':
+            if self.down_threshold_type == 'atr':
+                return f"ATR × {self.down_atr_multiplier} (约 {self.current_atr * self.down_atr_multiplier:.2f})"
+            else:
+                return f"{self.down_threshold * 100}%"
+        elif threshold_type == 'stop_loss':
+            if self.stop_loss_type == 'atr':
+                return f"ATR × {self.stop_loss_atr_multiplier} (约 {self.current_atr * self.stop_loss_atr_multiplier:.2f})"
+            else:
+                return f"{self.stop_loss_ratio * 100}%"
+        return "未知"
+
+    async def _update_atr(self):
+        """计算并更新ATR值"""
+        try:
+            # 获取K线数据
+            ohlcv = await self.exchange.fetch_ohlcv(
+                self.symbol,
+                timeframe=self.atr_timeframe,
+                limit=self.atr_period + 1
+            )
+
+            # 计算True Range
+            tr_list = []
+            prev_close = None
+
+            for candle in ohlcv:
+                timestamp, open_price, high, low, close, volume = candle
+                high = Decimal(str(high))
+                low = Decimal(str(low))
+                close = Decimal(str(close))
+
+                if prev_close is not None:
+                    # TR = max(H-L, |H-PC|, |L-PC|)
+                    tr1 = high - low
+                    tr2 = abs(high - prev_close)
+                    tr3 = abs(low - prev_close)
+                    tr = max(tr1, tr2, tr3)
+                    tr_list.append(tr)
+
+                prev_close = close
+
+            # 计算ATR（简单移动平均）
+            if tr_list:
+                self.current_atr = sum(tr_list) / len(tr_list)
+                logger.info(f"ATR更新成功: {self.current_atr:.8f}")
+            else:
+                logger.warning("ATR计算失败，使用默认值")
+                self.current_atr = Decimal('0')
+
+        except Exception as e:
+            logger.error(f"计算ATR失败: {e}")
+            self.current_atr = Decimal('0')
 
     async def open_initial_positions(self):
         """开启初始多空单"""
@@ -129,7 +213,8 @@ class HedgeGridStrategy:
                 'entry_price': Decimal(str(order.get('average', order.get('price', price)))),
                 'amount': self.position_amount,
                 'entry_time': order['timestamp'],
-                'is_open': True
+                'is_open': True,
+                'entry_atr': self.current_atr  # 记录开仓时的ATR
             }
             self.long_positions.append(long_position)
 
@@ -166,7 +251,8 @@ class HedgeGridStrategy:
                 'entry_price': Decimal(str(order.get('average', order.get('price', price)))),
                 'amount': self.position_amount,
                 'entry_time': order['timestamp'],
-                'is_open': True
+                'is_open': True,
+                'entry_atr': self.current_atr  # 记录开仓时的ATR
             }
             self.short_positions.append(short_position)
 
@@ -174,6 +260,94 @@ class HedgeGridStrategy:
 
         except Exception as e:
             logger.error(f"开空单失败: {e}")
+
+    def _calculate_long_stop_loss(self, position: Dict) -> Decimal:
+        """
+        计算多单止损价格
+
+        Args:
+            position: 持仓信息
+
+        Returns:
+            止损价格
+        """
+        entry_price = position['entry_price']
+        entry_atr = position.get('entry_atr', self.current_atr)
+
+        if self.stop_loss_type == 'atr':
+            # 基于ATR计算止损: 入场价 - ATR × 倍数
+            stop_price = entry_price - (entry_atr * self.stop_loss_atr_multiplier)
+        else:
+            # 基于百分比计算止损
+            stop_price = entry_price * (1 - self.stop_loss_ratio)
+
+        return stop_price
+
+    def _calculate_long_take_profit(self, position: Dict) -> Decimal:
+        """
+        计算多单止盈价格
+
+        Args:
+            position: 持仓信息
+
+        Returns:
+            止盈价格
+        """
+        entry_price = position['entry_price']
+        entry_atr = position.get('entry_atr', self.current_atr)
+
+        if self.up_threshold_type == 'atr':
+            # 基于ATR计算止盈: 入场价 + ATR × 倍数
+            tp_price = entry_price + (entry_atr * self.up_atr_multiplier)
+        else:
+            # 基于百分比计算止盈
+            tp_price = entry_price * (1 + self.up_threshold)
+
+        return tp_price
+
+    def _calculate_short_stop_loss(self, position: Dict) -> Decimal:
+        """
+        计算空单止损价格
+
+        Args:
+            position: 持仓信息
+
+        Returns:
+            止损价格
+        """
+        entry_price = position['entry_price']
+        entry_atr = position.get('entry_atr', self.current_atr)
+
+        if self.stop_loss_type == 'atr':
+            # 基于ATR计算止损: 入场价 + ATR × 倍数
+            stop_price = entry_price + (entry_atr * self.stop_loss_atr_multiplier)
+        else:
+            # 基于百分比计算止损
+            stop_price = entry_price * (1 + self.stop_loss_ratio)
+
+        return stop_price
+
+    def _calculate_short_take_profit(self, position: Dict) -> Decimal:
+        """
+        计算空单止盈价格
+
+        Args:
+            position: 持仓信息
+
+        Returns:
+            止盈价格
+        """
+        entry_price = position['entry_price']
+        entry_atr = position.get('entry_atr', self.current_atr)
+
+        if self.down_threshold_type == 'atr':
+            # 基于ATR计算止盈: 入场价 - ATR × 倍数
+            tp_price = entry_price - (entry_atr * self.down_atr_multiplier)
+        else:
+            # 基于百分比计算止盈
+            tp_price = entry_price * (1 - self.down_threshold)
+
+        return tp_price
 
     async def check_long_triggers(self, current_price: Decimal):
         """
@@ -187,20 +361,22 @@ class HedgeGridStrategy:
                 continue
 
             entry_price = position['entry_price']
-            amount = position['amount']
 
-            # 计算盈亏
-            price_change = (current_price - entry_price) / entry_price
+            # 计算止盈价格
+            tp_price = self._calculate_long_take_profit(position)
 
-            # 检查上涨触发（止盈）
-            if price_change >= self.up_threshold:
+            # 计算止损价格
+            sl_price = self._calculate_long_stop_loss(position)
+
+            # 检查止盈
+            if current_price >= tp_price:
                 await self._close_long_position(position, current_price, reason="止盈")
                 # 重新开多单
                 await self._open_long_position(current_price)
                 continue
 
             # 检查止损
-            if price_change <= -self.stop_loss_ratio:
+            if current_price <= sl_price:
                 await self._close_long_position(position, current_price, reason="止损")
                 # 重新开多单
                 await self._open_long_position(current_price)
@@ -218,20 +394,22 @@ class HedgeGridStrategy:
                 continue
 
             entry_price = position['entry_price']
-            amount = position['amount']
 
-            # 计算盈亏（空单是反的，价格下跌盈利）
-            price_change = (entry_price - current_price) / entry_price
+            # 计算止盈价格（空单是价格下跌止盈）
+            tp_price = self._calculate_short_take_profit(position)
 
-            # 检查下跌触发（止盈）
-            if price_change >= self.down_threshold:
+            # 计算止损价格（空单是价格上涨止损）
+            sl_price = self._calculate_short_stop_loss(position)
+
+            # 检查止盈（价格下跌）
+            if current_price <= tp_price:
                 await self._close_short_position(position, current_price, reason="止盈")
                 # 重新开空单
                 await self._open_short_position(current_price)
                 continue
 
-            # 检查止损（价格上涨亏损）
-            if price_change <= -self.stop_loss_ratio:
+            # 检查止损（价格上涨）
+            if current_price >= sl_price:
                 await self._close_short_position(position, current_price, reason="止损")
                 # 重新开空单
                 await self._open_short_position(current_price)
@@ -357,6 +535,9 @@ class HedgeGridStrategy:
 
     async def check_positions(self):
         """检查所有持仓触发条件"""
+        # 更新ATR（每小时更新一次）
+        await self._update_atr()
+
         # 风险控制检查
         if not self._check_risk_control():
             logger.warning("风险控制触发，跳过交易")
@@ -482,12 +663,18 @@ class HedgeGridStrategy:
             'symbol': self.symbol,
             'is_running': self.is_running,
             'current_price': float(current_price),
+            'current_atr': float(self.current_atr),
             'positions': {
                 'long_count': len([p for p in self.long_positions if p['is_open']]),
                 'short_count': len([p for p in self.short_positions if p['is_open']]),
                 'long_pnl': float(long_pnl),
                 'short_pnl': float(short_pnl),
                 'total_pnl': float(total_pnl)
+            },
+            'thresholds': {
+                'up_threshold': self._get_threshold_desc('up'),
+                'down_threshold': self._get_threshold_desc('down'),
+                'stop_loss': self._get_threshold_desc('stop_loss')
             },
             'stats': {
                 'total_trades': self.trade_count,
@@ -507,10 +694,7 @@ class HedgeGridStrategy:
             'risk_control': {
                 'max_positions': self.max_positions,
                 'max_daily_loss': float(self.max_daily_loss),
-                'max_daily_trades': self.max_daily_trades,
-                'up_threshold': float(self.up_threshold),
-                'down_threshold': float(self.down_threshold),
-                'stop_loss_ratio': float(self.stop_loss_ratio)
+                'max_daily_trades': self.max_daily_trades
             }
         }
 
@@ -593,6 +777,7 @@ class HedgeGridStrategy:
                     status = await self.get_status()
                     logger.info(
                         f"价格: {status['current_price']} | "
+                        f"ATR: {status['current_atr']:.4f} | "
                         f"多单: {status['positions']['long_count']} | "
                         f"空单: {status['positions']['short_count']} | "
                         f"浮盈: {status['positions']['total_pnl']:.2f} | "

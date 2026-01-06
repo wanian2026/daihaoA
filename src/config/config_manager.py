@@ -156,22 +156,57 @@ class ConfigManager:
             errors.append(f"投资金额应大于0，当前: {investment}")
 
         position_amount = strategy_config.get('position_amount', 0)
-        if position_amount < 0:
-            errors.append(f"持仓数量不能为负数，当前: {position_amount}")
+        if position_amount <= 0:
+            errors.append(f"持仓数量必须大于0，当前: {position_amount}")
 
-        # 验证触发阈值
-        up_threshold = strategy_config.get('up_threshold', 0)
-        if up_threshold <= 0 or up_threshold > 0.5:
-            errors.append(f"上涨阈值应在0-50%之间，当前: {up_threshold*100}%")
+        # 验证ATR参数
+        atr_period = strategy_config.get('atr_period', 14)
+        if atr_period < 1 or atr_period > 100:
+            errors.append(f"ATR周期应在1-100之间，当前: {atr_period}")
 
-        down_threshold = strategy_config.get('down_threshold', 0)
-        if down_threshold <= 0 or down_threshold > 0.5:
-            errors.append(f"下跌阈值应在0-50%之间，当前: {down_threshold*100}%")
+        atr_timeframe = strategy_config.get('atr_timeframe', '1h')
+        valid_timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
+        if atr_timeframe not in valid_timeframes:
+            errors.append(f"ATR时间周期应为 {', '.join(valid_timeframes)} 之一，当前: {atr_timeframe}")
 
-        # 验证风险控制参数
-        stop_loss_ratio = strategy_config.get('stop_loss_ratio', 0)
-        if stop_loss_ratio <= 0 or stop_loss_ratio > 0.5:
-            errors.append(f"止损比例应在0-50%之间，当前: {stop_loss_ratio*100}%")
+        # 验证上涨止盈参数
+        up_threshold_type = strategy_config.get('up_threshold_type', 'percent')
+        if up_threshold_type == 'percent':
+            up_threshold = strategy_config.get('up_threshold', 0)
+            if up_threshold <= 0 or up_threshold > 0.5:
+                errors.append(f"上涨阈值应在0-50%之间，当前: {up_threshold*100}%")
+        elif up_threshold_type == 'atr':
+            up_atr_multiplier = strategy_config.get('up_atr_multiplier', 0.9)
+            if up_atr_multiplier <= 0 or up_atr_multiplier > 5:
+                errors.append(f"上涨ATR倍数应在0-5之间，当前: {up_atr_multiplier}")
+        else:
+            errors.append(f"上涨阈值类型应为 percent 或 atr，当前: {up_threshold_type}")
+
+        # 验证下跌止盈参数
+        down_threshold_type = strategy_config.get('down_threshold_type', 'percent')
+        if down_threshold_type == 'percent':
+            down_threshold = strategy_config.get('down_threshold', 0)
+            if down_threshold <= 0 or down_threshold > 0.5:
+                errors.append(f"下跌阈值应在0-50%之间，当前: {down_threshold*100}%")
+        elif down_threshold_type == 'atr':
+            down_atr_multiplier = strategy_config.get('down_atr_multiplier', 0.9)
+            if down_atr_multiplier <= 0 or down_atr_multiplier > 5:
+                errors.append(f"下跌ATR倍数应在0-5之间，当前: {down_atr_multiplier}")
+        else:
+            errors.append(f"下跌阈值类型应为 percent 或 atr，当前: {down_threshold_type}")
+
+        # 验证止损参数
+        stop_loss_type = strategy_config.get('stop_loss_type', 'percent')
+        if stop_loss_type == 'percent':
+            stop_loss_ratio = strategy_config.get('stop_loss_ratio', 0)
+            if stop_loss_ratio <= 0 or stop_loss_ratio > 0.5:
+                errors.append(f"止损比例应在0-50%之间，当前: {stop_loss_ratio*100}%")
+        elif stop_loss_type == 'atr':
+            stop_loss_atr_multiplier = strategy_config.get('stop_loss_atr_multiplier', 1.5)
+            if stop_loss_atr_multiplier <= 0 or stop_loss_atr_multiplier > 10:
+                errors.append(f"止损ATR倍数应在0-10之间，当前: {stop_loss_atr_multiplier}")
+        else:
+            errors.append(f"止损类型应为 percent 或 atr，当前: {stop_loss_type}")
 
         max_daily_loss = strategy_config.get('max_daily_loss', 0)
         if max_daily_loss < 0:
