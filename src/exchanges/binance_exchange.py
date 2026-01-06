@@ -1,7 +1,7 @@
 """
 币安交易所连接模块 - 使用真实API
 """
-import ccxt
+import ccxt.async_support as ccxt
 import logging
 from typing import Dict, List, Optional, Any
 from decimal import Decimal
@@ -25,7 +25,7 @@ class BinanceExchange:
         self.secret = secret
         self.testnet = testnet
 
-        # 初始化CCXT实例
+        # 初始化CCXT异步实例
         self.exchange = ccxt.binance({
             'apiKey': api_key,
             'secret': secret,
@@ -41,6 +41,14 @@ class BinanceExchange:
             logger.info("使用币安测试网络")
 
         logger.info("币安交易所连接初始化成功")
+
+    async def close(self):
+        """关闭交易所连接"""
+        try:
+            await self.exchange.close()
+            logger.info("交易所连接已关闭")
+        except Exception as e:
+            logger.error(f"关闭交易所连接失败: {e}")
 
     async def test_connection(self) -> bool:
         """测试连接是否正常"""
