@@ -152,7 +152,25 @@ class HedgeGridStrategy:
         """
         try:
             balance = await self.exchange.fetch_balance()
-            usdt_balance = Decimal(str(balance.get('USDT', {}).get('free', 0)))
+
+            # 尝试获取USDT余额
+            # 合约账户可能有不同的余额结构
+            usdt_balance = Decimal('0')
+
+            # 尝试直接获取
+            if 'USDT' in balance:
+                usdt_balance = Decimal(str(balance['USDT'].get('free', 0)))
+
+            # 如果是合约账户，尝试获取总权益
+            elif 'USDT' not in balance and 'info' in balance:
+                # 合约账户通常在 info 字段中
+                total_balance = balance.get('USDT', {}).get('total', 0)
+                usdt_balance = Decimal(str(total_balance))
+
+            # 如果余额为0，尝试从账户总余额获取
+            if usdt_balance == 0 and 'USDT' in balance:
+                usdt_balance = Decimal(str(balance['USDT'].get('total', 0)))
+
             self.account_balance = usdt_balance
             logger.info(f"账户余额查询成功: {usdt_balance} USDT")
             return usdt_balance

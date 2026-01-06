@@ -67,12 +67,22 @@ class ConfigInteractive:
         testnet_input = input("是否使用测试网络 (y/n，默认: n): ").strip().lower()
         testnet = testnet_input == 'y'
 
+        # 市场类型
+        print("\n【市场类型选择】")
+        print("  1. spot    - 现货交易（无杠杆）")
+        print("  2. future  - 合约交易（有杠杆）")
+        print("  3. swap    - 永续合约（有杠杆）")
+        market_type_input = input("请选择市场类型 (1/2/3，默认: 2): ").strip()
+        market_type_map = {'1': 'spot', '2': 'future', '3': 'swap'}
+        market_type = market_type_map.get(market_type_input, 'future')
+
         # 更新配置
         self.config_manager.update_exchange_config({
             'exchange': 'binance',
             'api_key': api_key,
             'secret': secret,
-            'testnet': testnet
+            'testnet': testnet,
+            'market_type': market_type
         })
 
         print("\n✓ 交易所配置完成\n")
@@ -258,6 +268,7 @@ class ConfigInteractive:
         print(f"  API Key: {exchange.get('api_key', '')[:8]}...")
         print(f"  Secret: {exchange.get('secret', '')[:8]}...")
         print(f"  测试网络: {'是' if exchange.get('testnet') else '否'}")
+        print(f"  市场类型: {exchange.get('market_type', 'spot')} ({'现货' if exchange.get('market_type') == 'spot' else '合约'})")
         print()
 
         # 策略配置

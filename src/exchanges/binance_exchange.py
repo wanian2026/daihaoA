@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class BinanceExchange:
     """币安交易所封装类"""
 
-    def __init__(self, api_key: str, secret: str, testnet: bool = False):
+    def __init__(self, api_key: str, secret: str, testnet: bool = False, market_type: str = 'spot'):
         """
         初始化币安交易所连接
 
@@ -20,10 +20,12 @@ class BinanceExchange:
             api_key: API Key
             secret: API Secret
             testnet: 是否使用测试网络
+            market_type: 市场类型 (spot=现货, future=合约, swap=永续合约)
         """
         self.api_key = api_key
         self.secret = secret
         self.testnet = testnet
+        self.market_type = market_type
 
         # 初始化CCXT异步实例
         self.exchange = ccxt.binance({
@@ -31,7 +33,7 @@ class BinanceExchange:
             'secret': secret,
             'enableRateLimit': True,  # 启用速率限制
             'options': {
-                'defaultType': 'spot',  # 现货交易
+                'defaultType': market_type,  # 市场类型
             }
         })
 
@@ -40,7 +42,7 @@ class BinanceExchange:
             self.exchange.set_sandbox_mode(True)
             logger.info("使用币安测试网络")
 
-        logger.info("币安交易所连接初始化成功")
+        logger.info(f"币安交易所连接初始化成功 (市场类型: {market_type})")
 
     async def close(self):
         """关闭交易所连接"""
