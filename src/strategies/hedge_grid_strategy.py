@@ -445,16 +445,26 @@ class HedgeGridStrategy:
 
             # 检查止盈
             if current_price >= tp_price:
+                logger.info(f"多单止盈触发: 当前价格 {current_price} >= 止盈价格 {tp_price}")
                 await self._close_long_position(position, current_price, reason="止盈")
-                # 重新开多单
-                await self._open_long_position(current_price)
+
+                # 风险控制检查后重新开多单
+                if self._check_risk_control_full():
+                    await self._open_long_position(current_price)
+                else:
+                    logger.warning("风险控制触发，跳过重新开多单")
                 continue
 
             # 检查止损
             if current_price <= sl_price:
+                logger.info(f"多单止损触发: 当前价格 {current_price} <= 止损价格 {sl_price}")
                 await self._close_long_position(position, current_price, reason="止损")
-                # 重新开多单
-                await self._open_long_position(current_price)
+
+                # 风险控制检查后重新开多单
+                if self._check_risk_control_full():
+                    await self._open_long_position(current_price)
+                else:
+                    logger.warning("风险控制触发，跳过重新开多单")
                 continue
 
     async def check_short_triggers(self, current_price: Decimal):
@@ -478,16 +488,26 @@ class HedgeGridStrategy:
 
             # 检查止盈（价格下跌）
             if current_price <= tp_price:
+                logger.info(f"空单止盈触发: 当前价格 {current_price} <= 止盈价格 {tp_price}")
                 await self._close_short_position(position, current_price, reason="止盈")
-                # 重新开空单
-                await self._open_short_position(current_price)
+
+                # 风险控制检查后重新开空单
+                if self._check_risk_control_full():
+                    await self._open_short_position(current_price)
+                else:
+                    logger.warning("风险控制触发，跳过重新开空单")
                 continue
 
             # 检查止损（价格上涨）
             if current_price >= sl_price:
+                logger.info(f"空单止损触发: 当前价格 {current_price} >= 止损价格 {sl_price}")
                 await self._close_short_position(position, current_price, reason="止损")
-                # 重新开空单
-                await self._open_short_position(current_price)
+
+                # 风险控制检查后重新开空单
+                if self._check_risk_control_full():
+                    await self._open_short_position(current_price)
+                else:
+                    logger.warning("风险控制触发，跳过重新开空单")
                 continue
 
     async def _close_long_position(self, position: Dict, current_price: Decimal, reason: str = ""):
@@ -621,8 +641,8 @@ class HedgeGridStrategy:
         # 更新ATR（每小时更新一次）
         await self._update_atr()
 
-        # 风险控制检查
-        if not self._check_risk_control():
+        # 风险控制检查（检查每日限制，但不检查持仓数量）
+        if not self._check_risk_control_basic():
             logger.warning("风险控制触发，跳过交易")
             return
 
@@ -671,9 +691,9 @@ class HedgeGridStrategy:
 
         logger.info("所有持仓已平仓")
 
-    def _check_risk_control(self) -> bool:
+    def _check_risk_control_basic(self) -> bool:
         """
-        风险控制检查
+        基础风险控制检查（只检查每日限制，不检查持仓数量）
 
         Returns:
             是否允许交易
@@ -692,6 +712,19 @@ class HedgeGridStrategy:
         if self.daily_trades >= self.max_daily_trades:
             logger.warning(f"已达到每日最大交易次数: {self.daily_trades}/{self.max_daily_trades}")
             self.is_paused = True
+            return False
+
+        return True
+
+    def _check_risk_control_full(self) -> bool:
+        """
+        完整风险控制检查（包括持仓数量）
+
+        Returns:
+            是否允许交易
+        """
+        # 先进行基础检查
+        if not self._check_risk_control_basic():
             return False
 
         # 检查最大持仓数量
@@ -867,6 +900,9 @@ class HedgeGridStrategy:
                         f"总交易: {status['stats']['total_trades']}"
                     )
 
+                    # 显示详细的持仓信息（包括止盈止损价格）
+                    self._log_position_details(status['current_price'])
+
                     # 检查持仓触发条件
                     await self.check_positions()
 
@@ -880,3 +916,40 @@ class HedgeGridStrategy:
             logger.info("主循环已取消")
 
         logger.info("策略主循环已结束")
+
+    def _log_position_details(self, current_price: Decimal):
+        """
+        记录详细的持仓信息（包括止盈止损价格）
+
+        Args:
+            current_price: 当前价格
+        """
+        # 多单详情
+        for idx, position in enumerate(self.long_positions):
+            if position['is_open']:
+                tp_price = self._calculate_long_take_profit(position)
+                sl_price = self._calculate_long_stop_loss(position)
+
+                distance_to_tp = ((tp_price - current_price) / current_price) * 100
+                distance_to_sl = ((current_price - sl_price) / current_price) * 100
+
+                logger.info(
+                    f"  多单{idx+1}: 入场={position['entry_price']} | "
+                    f"止盈={tp_price} (+{distance_to_tp:.2f}%) | "
+                    f"止损={sl_price} (-{distance_to_sl:.2f}%)"
+                )
+
+        # 空单详情
+        for idx, position in enumerate(self.short_positions):
+            if position['is_open']:
+                tp_price = self._calculate_short_take_profit(position)
+                sl_price = self._calculate_short_stop_loss(position)
+
+                distance_to_tp = ((current_price - tp_price) / current_price) * 100
+                distance_to_sl = ((sl_price - current_price) / current_price) * 100
+
+                logger.info(
+                    f"  空单{idx+1}: 入场={position['entry_price']} | "
+                    f"止盈={tp_price} (-{distance_to_tp:.2f}%) | "
+                    f"止损={sl_price} (+{distance_to_sl:.2f}%)"
+                )
