@@ -3,8 +3,7 @@
         "exchange": "binance",
         "api_key": "",
         "secret": "",
-        "testnet": true,
-        "market_type": "future"
+        "testnet": true
     },
     "strategy": {
         "symbol": "BTC/USDT",

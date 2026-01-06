@@ -268,7 +268,7 @@ class HedgeGridStrategy:
 
     async def _open_long_position(self, price: Decimal):
         """
-        开多单
+        开多单（U本位合约）
 
         Args:
             price: 当前价格（用于市价单）
@@ -277,9 +277,13 @@ class HedgeGridStrategy:
             # 计算开仓数量（基于账户余额、仓位比例和杠杆倍数）
             position_amount = self._calculate_position_amount(price)
 
-            # 使用市价买入
+            # U本位合约，使用 positionSide: 'LONG' 指定多单
             amount = float(position_amount)
-            order = await self.exchange.create_market_buy_order(self.symbol, amount)
+            order = await self.exchange.create_market_buy_order(
+                self.symbol,
+                amount,
+                params={'positionSide': 'LONG'}
+            )
 
             # 记录多单信息
             long_position = {
@@ -299,7 +303,7 @@ class HedgeGridStrategy:
 
     async def _open_short_position(self, price: Decimal):
         """
-        开空单
+        开空单（U本位合约）
 
         Args:
             price: 当前价格（用于市价单）
@@ -308,19 +312,13 @@ class HedgeGridStrategy:
             # 计算开仓数量（基于账户余额、仓位比例和杠杆倍数）
             position_amount = self._calculate_position_amount(price)
 
-            # 检查是否有足够的币
-            base_currency = self.symbol.split('/')[0]
-            balance = await self.exchange.fetch_balance()
-            available_base = Decimal(str(balance.get(base_currency, {}).get('free', 0)))
-
-            if available_base < position_amount:
-                logger.warning(f"可用 {base_currency} 不足，无法开空单: 需要 {position_amount:.6f}, 可用 {available_base:.6f}")
-                # 先开多单，等待上涨后开空单
-                return
-
-            # 使用市价卖空（卖出持有的币）
+            # U本位合约，做空不需要持有币种，使用 positionSide: 'SHORT' 指定空单
             amount = float(position_amount)
-            order = await self.exchange.create_market_sell_order(self.symbol, amount)
+            order = await self.exchange.create_market_sell_order(
+                self.symbol,
+                amount,
+                params={'positionSide': 'SHORT'}
+            )
 
             # 记录空单信息
             short_position = {
@@ -494,7 +492,7 @@ class HedgeGridStrategy:
 
     async def _close_long_position(self, position: Dict, current_price: Decimal, reason: str = ""):
         """
-        平多单
+        平多单（U本位合约）
 
         Args:
             position: 多单信息
@@ -505,8 +503,12 @@ class HedgeGridStrategy:
             position['is_open'] = False
             amount = float(position['amount'])
 
-            # 市价卖出平仓
-            order = await self.exchange.create_market_sell_order(self.symbol, amount)
+            # U本位合约，平多单使用 positionSide: 'LONG'
+            order = await self.exchange.create_market_sell_order(
+                self.symbol,
+                amount,
+                params={'positionSide': 'LONG', 'reduceOnly': True}
+            )
 
             # 计算盈亏
             entry_price = position['entry_price']
@@ -553,7 +555,7 @@ class HedgeGridStrategy:
 
     async def _close_short_position(self, position: Dict, current_price: Decimal, reason: str = ""):
         """
-        平空单
+        平空单（U本位合约）
 
         Args:
             position: 空单信息
@@ -564,8 +566,12 @@ class HedgeGridStrategy:
             position['is_open'] = False
             amount = float(position['amount'])
 
-            # 市价买入平空单（买回币）
-            order = await self.exchange.create_market_buy_order(self.symbol, amount)
+            # U本位合约，平空单使用 positionSide: 'SHORT'
+            order = await self.exchange.create_market_buy_order(
+                self.symbol,
+                amount,
+                params={'positionSide': 'SHORT', 'reduceOnly': True}
+            )
 
             # 计算盈亏（空单是反的：高卖低买盈利）
             entry_price = position['entry_price']

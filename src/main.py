@@ -74,8 +74,7 @@ async def main():
         exchange = BinanceExchange(
             api_key=exchange_config['api_key'],
             secret=exchange_config['secret'],
-            testnet=exchange_config.get('testnet', False),
-            market_type=exchange_config.get('market_type', 'spot')
+            testnet=exchange_config.get('testnet', False)
         )
 
         # 测试连接
