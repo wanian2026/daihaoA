@@ -1,0 +1,16 @@
+{
+    "exchange": {
+        "exchange": "binance",
+        "api_key": "",
+        "secret": "",
+        "testnet": false
+    },
+    "strategy": {
+        "symbol": "BTC/USDT",
+        "base_price": 0,
+        "grid_count": 10,
+        "grid_ratio": 0.01,
+        "investment": 1000,
+        "min_profit": 0.002
+    }
+}
