@@ -28,7 +28,7 @@ class ConfigInteractive:
             完整配置
         """
         print("\n" + "="*50)
-        print("币安对冲网格策略配置向导")
+        print("币安双向持仓策略配置向导")
         print("="*50 + "\n")
 
         # 配置交易所
@@ -79,7 +79,7 @@ class ConfigInteractive:
 
     def _configure_strategy(self):
         """配置策略"""
-        print("【步骤 2/2】配置对冲网格策略")
+        print("【步骤 2/2】配置双向持仓策略")
         print("-" * 30)
 
         # 交易对
@@ -88,55 +88,53 @@ class ConfigInteractive:
             print("交易对不能为空")
             return self._configure_strategy()
 
-        # 基准价格
-        base_price_input = input("请输入基准价格 (留空则使用当前价格): ").strip()
-        base_price = float(base_price_input) if base_price_input else 0
-
-        # 网格数量
-        grid_count_input = input("请输入网格数量 (默认: 10): ").strip()
-        grid_count = int(grid_count_input) if grid_count_input else 10
-
-        # 网格间距
-        grid_ratio_input = input("请输入网格间距百分比 (默认: 1，即1%): ").strip()
-        grid_ratio = float(grid_ratio_input) / 100 if grid_ratio_input else 0.01
-
         # 投资金额
         investment_input = input("请输入投资金额 USDT (默认: 1000): ").strip()
         investment = float(investment_input) if investment_input else 1000
 
-        # 最小止盈
-        min_profit_input = input("请输入最小止盈百分比 (默认: 0.2，即0.2%): ").strip()
-        min_profit = float(min_profit_input) / 100 if min_profit_input else 0.002
+        # 持仓数量
+        position_amount_input = input("请输入单笔持仓数量 (留空则自动计算): ").strip()
+        position_amount = float(position_amount_input) if position_amount_input else 0
+
+        print("\n【触发阈值配置】")
+        print("-" * 30)
+
+        # 上涨阈值
+        up_threshold_input = input("请输入上涨触发阈值百分比 (默认: 2，即2%): ").strip()
+        up_threshold = float(up_threshold_input) / 100 if up_threshold_input else 0.02
+
+        # 下跌阈值
+        down_threshold_input = input("请输入下跌触发阈值百分比 (默认: 2，即2%): ").strip()
+        down_threshold = float(down_threshold_input) / 100 if down_threshold_input else 0.02
 
         print("\n【风险控制配置】")
         print("-" * 30)
 
-        # 止损
-        stop_loss_input = input("请输入止损百分比 (默认: 5，即5%): ").strip()
-        stop_loss = float(stop_loss_input) / 100 if stop_loss_input else 0.05
+        # 止损比例
+        stop_loss_ratio_input = input("请输入止损比例百分比 (默认: 5，即5%): ").strip()
+        stop_loss_ratio = float(stop_loss_ratio_input) / 100 if stop_loss_ratio_input else 0.05
 
-        # 最大持仓
-        max_position_input = input("请输入最大持仓数量 (0表示不限制，默认: 0): ").strip()
-        max_position = float(max_position_input) if max_position_input else 0
+        # 最大持仓对数
+        max_positions_input = input("请输入最大持仓对数 (默认: 5): ").strip()
+        max_positions = int(max_positions_input) if max_positions_input else 5
 
         # 每日最大亏损
         max_daily_loss_input = input("请输入每日最大亏损 USDT (默认: 100): ").strip()
         max_daily_loss = float(max_daily_loss_input) if max_daily_loss_input else 100
 
         # 每日最大交易次数
-        max_daily_trades_input = input("请输入每日最大交易次数 (默认: 100): ").strip()
-        max_daily_trades = int(max_daily_trades_input) if max_daily_trades_input else 100
+        max_daily_trades_input = input("请输入每日最大交易次数 (默认: 50): ").strip()
+        max_daily_trades = int(max_daily_trades_input) if max_daily_trades_input else 50
 
         # 更新配置
         self.config_manager.update_strategy_config({
             'symbol': symbol,
-            'base_price': base_price,
-            'grid_count': grid_count,
-            'grid_ratio': grid_ratio,
             'investment': investment,
-            'min_profit': min_profit,
-            'stop_loss': stop_loss,
-            'max_position': max_position,
+            'position_amount': position_amount,
+            'up_threshold': up_threshold,
+            'down_threshold': down_threshold,
+            'stop_loss_ratio': stop_loss_ratio,
+            'max_positions': max_positions,
             'max_daily_loss': max_daily_loss,
             'max_daily_trades': max_daily_trades
         })
@@ -164,17 +162,20 @@ class ConfigInteractive:
         strategy = config.get('strategy', {})
         print("【策略配置】")
         print(f"  交易对: {strategy.get('symbol', 'N/A')}")
-        print(f"  基准价格: {strategy.get('base_price', 0) or '自动'}")
-        print(f"  网格数量: {strategy.get('grid_count', 0)}")
-        print(f"  网格间距: {strategy.get('grid_ratio', 0) * 100}%")
         print(f"  投资金额: {strategy.get('investment', 0)} USDT")
-        print(f"  最小止盈: {strategy.get('min_profit', 0) * 100}%")
+        print(f"  单笔持仓数量: {strategy.get('position_amount', 0) or '自动'}")
+        print()
+
+        # 触发阈值配置
+        print("【触发阈值配置】")
+        print(f"  上涨触发阈值: {strategy.get('up_threshold', 0) * 100}%")
+        print(f"  下跌触发阈值: {strategy.get('down_threshold', 0) * 100}%")
         print()
 
         # 风险控制配置
         print("【风险控制配置】")
-        print(f"  止损百分比: {strategy.get('stop_loss', 0) * 100}%")
-        print(f"  最大持仓: {strategy.get('max_position', 0) or '不限制'}")
+        print(f"  止损比例: {strategy.get('stop_loss_ratio', 0) * 100}%")
+        print(f"  最大持仓对数: {strategy.get('max_positions', 0)}")
         print(f"  每日最大亏损: {strategy.get('max_daily_loss', 0)} USDT")
         print(f"  每日最大交易次数: {strategy.get('max_daily_trades', 0)}")
         print()

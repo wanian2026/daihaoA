@@ -1,5 +1,5 @@
 """
-币安对冲网格策略 - 主入口
+币安双向持仓策略 - 主入口
 """
 import asyncio
 import sys
@@ -22,7 +22,7 @@ async def main():
     logger = get_logger(__name__)
 
     print("\n" + "="*50)
-    print("币安对冲网格自动化交易系统")
+    print("币安双向持仓自动化交易系统")
     print("="*50 + "\n")
 
     # 加载配置
@@ -85,7 +85,7 @@ async def main():
         logger.info("币安连接成功")
 
         # 初始化策略
-        logger.info("正在初始化对冲网格策略...")
+        logger.info("正在初始化双向持仓策略...")
         strategy = HedgeGridStrategy(
             exchange=exchange.exchange,
             symbol=strategy_config['symbol'],

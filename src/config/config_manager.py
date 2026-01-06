@@ -151,22 +151,27 @@ class ConfigManager:
             errors.append("交易对未配置")
 
         # 验证数值范围
-        grid_count = strategy_config.get('grid_count', 0)
-        if grid_count < 2 or grid_count > 50:
-            errors.append(f"网格数量应在2-50之间，当前: {grid_count}")
-
-        grid_ratio = strategy_config.get('grid_ratio', 0)
-        if grid_ratio <= 0 or grid_ratio > 0.5:
-            errors.append(f"网格间距应在0-50%之间，当前: {grid_ratio*100}%")
-
         investment = strategy_config.get('investment', 0)
         if investment <= 0:
             errors.append(f"投资金额应大于0，当前: {investment}")
 
+        position_amount = strategy_config.get('position_amount', 0)
+        if position_amount < 0:
+            errors.append(f"持仓数量不能为负数，当前: {position_amount}")
+
+        # 验证触发阈值
+        up_threshold = strategy_config.get('up_threshold', 0)
+        if up_threshold <= 0 or up_threshold > 0.5:
+            errors.append(f"上涨阈值应在0-50%之间，当前: {up_threshold*100}%")
+
+        down_threshold = strategy_config.get('down_threshold', 0)
+        if down_threshold <= 0 or down_threshold > 0.5:
+            errors.append(f"下跌阈值应在0-50%之间，当前: {down_threshold*100}%")
+
         # 验证风险控制参数
-        stop_loss = strategy_config.get('stop_loss', 0)
-        if stop_loss <= 0 or stop_loss > 0.5:
-            errors.append(f"止损百分比应在0-50%之间，当前: {stop_loss*100}%")
+        stop_loss_ratio = strategy_config.get('stop_loss_ratio', 0)
+        if stop_loss_ratio <= 0 or stop_loss_ratio > 0.5:
+            errors.append(f"止损比例应在0-50%之间，当前: {stop_loss_ratio*100}%")
 
         max_daily_loss = strategy_config.get('max_daily_loss', 0)
         if max_daily_loss < 0:
@@ -175,6 +180,10 @@ class ConfigManager:
         max_daily_trades = strategy_config.get('max_daily_trades', 0)
         if max_daily_trades < 0:
             errors.append(f"每日最大交易次数不能为负数，当前: {max_daily_trades}")
+
+        max_positions = strategy_config.get('max_positions', 0)
+        if max_positions <= 0 or max_positions > 20:
+            errors.append(f"最大持仓对数应在1-20之间，当前: {max_positions}")
 
         return (len(errors) == 0, errors)
 

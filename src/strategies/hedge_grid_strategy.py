@@ -1,5 +1,5 @@
 """
-对冲网格策略引擎
+双向持仓策略引擎
 """
 import asyncio
 import logging
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class HedgeGridStrategy:
-    """对冲网格策略"""
+    """双向持仓策略（同时持有多单和空单）"""
 
     def __init__(
         self,
@@ -21,7 +21,7 @@ class HedgeGridStrategy:
         trade_recorder=None
     ):
         """
-        初始化对冲网格策略
+        初始化双向持仓策略
 
         Args:
             exchange: 交易所实例
@@ -35,148 +35,342 @@ class HedgeGridStrategy:
         self.trade_recorder = trade_recorder
 
         # 策略参数
-        self.base_price = Decimal(str(config.get('base_price', 0)))  # 基准价格
-        self.grid_count = config.get('grid_count', 10)  # 网格数量
-        self.grid_ratio = Decimal(str(config.get('grid_ratio', 0.01)))  # 网格间距(1%)
-        self.investment = Decimal(str(config.get('investment', 1000)))  # 投资金额
-        self.min_profit = Decimal(str(config.get('min_profit', 0.002)))  # 最小止盈(0.2%)
+        self.investment = Decimal(str(config.get('investment', 1000)))  # 投资金额（每个单方向）
+        self.position_amount = Decimal(str(config.get('position_amount', 0)))  # 单笔持仓数量（0表示自动计算）
+
+        # 触发阈值
+        self.up_threshold = Decimal(str(config.get('up_threshold', 0.02)))  # 上涨触发阈值（2%）
+        self.down_threshold = Decimal(str(config.get('down_threshold', 0.02)))  # 下跌触发阈值（2%）
+
+        # 止损参数
+        self.stop_loss_ratio = Decimal(str(config.get('stop_loss_ratio', 0.05)))  # 止损比例（5%）
 
         # 风险控制参数
-        self.stop_loss = Decimal(str(config.get('stop_loss', 0.05)))  # 止损百分比(5%)
-        self.max_position = Decimal(str(config.get('max_position', 0)))  # 最大持仓量(0表示不限制)
         self.max_daily_loss = Decimal(str(config.get('max_daily_loss', 100)))  # 每日最大亏损USDT
-        self.max_daily_trades = config.get('max_daily_trades', 100)  # 每日最大交易次数
+        self.max_daily_trades = config.get('max_daily_trades', 50)  # 每日最大交易次数
+        self.max_positions = config.get('max_positions', 5)  # 最大持仓对数
+
+        # 持仓管理
+        self.long_positions: List[Dict] = []  # 多单列表
+        self.short_positions: List[Dict] = []  # 空单列表
 
         # 风险控制状态
-        self.current_position = Decimal('0')  # 当前持仓
         self.daily_loss = Decimal('0')  # 每日亏损
         self.daily_trades = 0  # 每日交易次数
         self.is_paused = False  # 是否暂停交易
 
         # 运行状态
         self.is_running = False
-        self.grid_orders: Dict[str, Dict] = {}  # grid_id -> order_info
-        self.open_orders: List[str] = []  # 挂单ID列表
 
         # 统计数据
         self.total_profit = Decimal('0')
+        self.total_loss = Decimal('0')
         self.trade_count = 0
-        self.buy_count = 0
-        self.sell_count = 0
+        self.long_profit_count = 0
+        self.long_loss_count = 0
+        self.short_profit_count = 0
+        self.short_loss_count = 0
 
-        logger.info(f"对冲网格策略初始化: {symbol}")
+        logger.info(f"双向持仓策略初始化: {symbol}")
 
     async def initialize(self):
         """初始化策略"""
-        logger.info("开始初始化对冲网格策略...")
+        logger.info("开始初始化双向持仓策略...")
 
-        # 获取当前价格作为基准价（如果未设置）
-        if self.base_price <= 0:
+        # 计算单笔持仓数量（如果未设置）
+        if self.position_amount <= 0:
             ticker = await self.exchange.fetch_ticker(self.symbol)
-            self.base_price = Decimal(str(ticker['last']))
-            logger.info(f"使用当前价格作为基准价: {self.base_price}")
+            current_price = Decimal(str(ticker['last']))
+            # 投资金额平均分配给多单和空单
+            self.position_amount = (self.investment / 2) / current_price
 
-        # 计算网格价位
-        self.grid_levels = self._calculate_grid_levels()
-        logger.info(f"计算网格级别完成，共 {len(self.grid_levels)} 个价位")
+        logger.info(f"单笔持仓数量: {self.position_amount}")
+        logger.info(f"上涨触发阈值: {self.up_threshold * 100}%")
+        logger.info(f"下跌触发阈值: {self.down_threshold * 100}%")
+        logger.info(f"止损比例: {self.stop_loss_ratio * 100}%")
 
-        logger.info("对冲网格策略初始化完成")
+        logger.info("双向持仓策略初始化完成")
 
-    def _calculate_grid_levels(self) -> List[Decimal]:
-        """
-        计算网格价位
+    async def open_initial_positions(self):
+        """开启初始多空单"""
+        logger.info("开始开启初始多空单...")
 
-        Returns:
-            网格价位列表
-        """
-        levels = []
-
-        # 上方网格（卖出网格）
-        for i in range(1, self.grid_count + 1):
-            price = self.base_price * (1 + self.grid_ratio * i)
-            levels.append({
-                'price': price,
-                'type': 'sell',
-                'grid_id': f"sell_{i}"
-            })
-
-        # 下方网格（买入网格）
-        for i in range(1, self.grid_count + 1):
-            price = self.base_price * (1 - self.grid_ratio * i)
-            levels.append({
-                'price': price,
-                'type': 'buy',
-                'grid_id': f"buy_{i}"
-            })
-
-        # 按价格排序
-        levels.sort(key=lambda x: x['price'])
-        return levels
-
-    async def place_grid_orders(self):
-        """放置网格订单"""
-        logger.info("开始放置网格订单...")
-
-        # 取消所有现有挂单
+        # 取消所有现有挂单（清理环境）
         await self.cancel_all_orders()
 
-        # 计算每笔订单数量
+        # 获取当前价格
+        ticker = await self.exchange.fetch_ticker(self.symbol)
+        current_price = Decimal(str(ticker['last']))
+        logger.info(f"当前价格: {current_price}")
+
+        # 开一个多单
+        await self._open_long_position(current_price)
+
+        # 开一个空单
+        await self._open_short_position(current_price)
+
+        logger.info(f"初始多空单开启完成: 多单 {len(self.long_positions)} 个, 空单 {len(self.short_positions)} 个")
+
+    async def _open_long_position(self, price: Decimal):
+        """
+        开多单
+
+        Args:
+            price: 当前价格（用于市价单）
+        """
+        try:
+            # 使用市价买入
+            amount = float(self.position_amount)
+            order = await self.exchange.create_market_buy_order(self.symbol, amount)
+
+            # 记录多单信息
+            long_position = {
+                'order_id': order['id'],
+                'entry_price': Decimal(str(order.get('average', order.get('price', price)))),
+                'amount': self.position_amount,
+                'entry_time': order['timestamp'],
+                'is_open': True
+            }
+            self.long_positions.append(long_position)
+
+            logger.info(f"开多单成功: 价格 {long_position['entry_price']}, 数量 {long_position['amount']}")
+
+        except Exception as e:
+            logger.error(f"开多单失败: {e}")
+
+    async def _open_short_position(self, price: Decimal):
+        """
+        开空单
+
+        Args:
+            price: 当前价格（用于市价单）
+        """
+        try:
+            # 检查是否有足够的币
+            base_currency = self.symbol.split('/')[0]
+            balance = await self.exchange.fetch_balance()
+            available_base = Decimal(str(balance.get(base_currency, {}).get('free', 0)))
+
+            if available_base < self.position_amount:
+                logger.warning(f"可用 {base_currency} 不足，无法开空单: 需要 {self.position_amount}, 可用 {available_base}")
+                # 先开多单，等待上涨后开空单
+                return
+
+            # 使用市价卖空（卖出持有的币）
+            amount = float(self.position_amount)
+            order = await self.exchange.create_market_sell_order(self.symbol, amount)
+
+            # 记录空单信息
+            short_position = {
+                'order_id': order['id'],
+                'entry_price': Decimal(str(order.get('average', order.get('price', price)))),
+                'amount': self.position_amount,
+                'entry_time': order['timestamp'],
+                'is_open': True
+            }
+            self.short_positions.append(short_position)
+
+            logger.info(f"开空单成功: 价格 {short_position['entry_price']}, 数量 {short_position['amount']}")
+
+        except Exception as e:
+            logger.error(f"开空单失败: {e}")
+
+    async def check_long_triggers(self, current_price: Decimal):
+        """
+        检查多单触发条件
+
+        Args:
+            current_price: 当前价格
+        """
+        for position in list(self.long_positions):
+            if not position['is_open']:
+                continue
+
+            entry_price = position['entry_price']
+            amount = position['amount']
+
+            # 计算盈亏
+            price_change = (current_price - entry_price) / entry_price
+
+            # 检查上涨触发（止盈）
+            if price_change >= self.up_threshold:
+                await self._close_long_position(position, current_price, reason="止盈")
+                # 重新开多单
+                await self._open_long_position(current_price)
+                continue
+
+            # 检查止损
+            if price_change <= -self.stop_loss_ratio:
+                await self._close_long_position(position, current_price, reason="止损")
+                # 重新开多单
+                await self._open_long_position(current_price)
+                continue
+
+    async def check_short_triggers(self, current_price: Decimal):
+        """
+        检查空单触发条件
+
+        Args:
+            current_price: 当前价格
+        """
+        for position in list(self.short_positions):
+            if not position['is_open']:
+                continue
+
+            entry_price = position['entry_price']
+            amount = position['amount']
+
+            # 计算盈亏（空单是反的，价格下跌盈利）
+            price_change = (entry_price - current_price) / entry_price
+
+            # 检查下跌触发（止盈）
+            if price_change >= self.down_threshold:
+                await self._close_short_position(position, current_price, reason="止盈")
+                # 重新开空单
+                await self._open_short_position(current_price)
+                continue
+
+            # 检查止损（价格上涨亏损）
+            if price_change <= -self.stop_loss_ratio:
+                await self._close_short_position(position, current_price, reason="止损")
+                # 重新开空单
+                await self._open_short_position(current_price)
+                continue
+
+    async def _close_long_position(self, position: Dict, current_price: Decimal, reason: str = ""):
+        """
+        平多单
+
+        Args:
+            position: 多单信息
+            current_price: 当前价格
+            reason: 平仓原因
+        """
+        try:
+            position['is_open'] = False
+            amount = float(position['amount'])
+
+            # 市价卖出平仓
+            order = await self.exchange.create_market_sell_order(self.symbol, amount)
+
+            # 计算盈亏
+            entry_price = position['entry_price']
+            profit_amount = (current_price - entry_price) * position['amount']
+            profit_ratio = (current_price - entry_price) / entry_price
+
+            # 更新统计
+            self.trade_count += 1
+            self.daily_trades += 1
+
+            if profit_amount >= 0:
+                self.total_profit += profit_amount
+                self.long_profit_count += 1
+                logger.info(f"多单止盈: 入场 {entry_price}, 平仓 {current_price}, 盈利 {profit_amount:.4f} ({profit_ratio*100:.2f}%)")
+            else:
+                self.total_loss += abs(profit_amount)
+                self.long_loss_count += 1
+                self.update_daily_stats(abs(profit_amount))
+                logger.warning(f"多单止损: 入场 {entry_price}, 平仓 {current_price}, 亏损 {profit_amount:.4f} ({profit_ratio*100:.2f}%)")
+
+            # 记录交易
+            if self.trade_recorder:
+                trade_data = {
+                    'symbol': self.symbol,
+                    'order_id': position['order_id'],
+                    'close_order_id': order.get('id'),
+                    'type': 'long',
+                    'entry_price': float(entry_price),
+                    'exit_price': float(current_price),
+                    'amount': float(position['amount']),
+                    'profit': float(profit_amount),
+                    'profit_ratio': float(profit_ratio),
+                    'reason': reason,
+                    'timestamp': order.get('timestamp')
+                }
+                self.trade_recorder.record_trade(trade_data)
+
+            # 从持仓中移除
+            if position in self.long_positions:
+                self.long_positions.remove(position)
+
+        except Exception as e:
+            logger.error(f"平多单失败: {e}")
+
+    async def _close_short_position(self, position: Dict, current_price: Decimal, reason: str = ""):
+        """
+        平空单
+
+        Args:
+            position: 空单信息
+            current_price: 当前价格
+            reason: 平仓原因
+        """
+        try:
+            position['is_open'] = False
+            amount = float(position['amount'])
+
+            # 市价买入平空单（买回币）
+            order = await self.exchange.create_market_buy_order(self.symbol, amount)
+
+            # 计算盈亏（空单是反的：高卖低买盈利）
+            entry_price = position['entry_price']
+            profit_amount = (entry_price - current_price) * position['amount']
+            profit_ratio = (entry_price - current_price) / entry_price
+
+            # 更新统计
+            self.trade_count += 1
+            self.daily_trades += 1
+
+            if profit_amount >= 0:
+                self.total_profit += profit_amount
+                self.short_profit_count += 1
+                logger.info(f"空单止盈: 入场 {entry_price}, 平仓 {current_price}, 盈利 {profit_amount:.4f} ({profit_ratio*100:.2f}%)")
+            else:
+                self.total_loss += abs(profit_amount)
+                self.short_loss_count += 1
+                self.update_daily_stats(abs(profit_amount))
+                logger.warning(f"空单止损: 入场 {entry_price}, 平仓 {current_price}, 亏损 {profit_amount:.4f} ({profit_ratio*100:.2f}%)")
+
+            # 记录交易
+            if self.trade_recorder:
+                trade_data = {
+                    'symbol': self.symbol,
+                    'order_id': position['order_id'],
+                    'close_order_id': order.get('id'),
+                    'type': 'short',
+                    'entry_price': float(entry_price),
+                    'exit_price': float(current_price),
+                    'amount': float(position['amount']),
+                    'profit': float(profit_amount),
+                    'profit_ratio': float(profit_ratio),
+                    'reason': reason,
+                    'timestamp': order.get('timestamp')
+                }
+                self.trade_recorder.record_trade(trade_data)
+
+            # 从持仓中移除
+            if position in self.short_positions:
+                self.short_positions.remove(position)
+
+        except Exception as e:
+            logger.error(f"平空单失败: {e}")
+
+    async def check_positions(self):
+        """检查所有持仓触发条件"""
+        # 风险控制检查
+        if not self._check_risk_control():
+            logger.warning("风险控制触发，跳过交易")
+            return
+
+        # 获取当前价格
         ticker = await self.exchange.fetch_ticker(self.symbol)
         current_price = Decimal(str(ticker['last']))
 
-        # 估算订单数量
-        base_currency = self.symbol.split('/')[0]
-        balance = await self.exchange.fetch_balance()
-        available_usdt = Decimal(str(balance.get('USDT', {}).get('free', 0)))
-        available_base = Decimal(str(balance.get(base_currency, {}).get('free', 0)))
+        # 检查多单触发条件
+        await self.check_long_triggers(current_price)
 
-        # 放置网格订单
-        for level in self.grid_levels:
-            try:
-                grid_id = level['grid_id']
-                order_type = level['type']
-                price = level['price']
-
-                # 计算订单数量
-                if order_type == 'buy':
-                    # 买单：根据可用USDT计算
-                    amount = (self.investment / (2 * self.grid_count)) / price
-                else:
-                    # 卖单：根据持有币种计算
-                    amount = (self.investment / (2 * self.grid_count)) / current_price
-
-                amount = float(amount)
-
-                # 创建订单
-                if order_type == 'buy':
-                    order = await self.exchange.create_limit_buy_order(
-                        self.symbol,
-                        amount,
-                        float(price)
-                    )
-                else:
-                    order = await self.exchange.create_limit_sell_order(
-                        self.symbol,
-                        amount,
-                        float(price)
-                    )
-
-                # 记录订单信息
-                self.grid_orders[grid_id] = {
-                    'order_id': order['id'],
-                    'type': order_type,
-                    'price': price,
-                    'amount': amount,
-                    'grid_id': grid_id
-                }
-                self.open_orders.append(order['id'])
-
-                logger.info(f"放置网格订单成功: {grid_id} {order_type} @ {price}")
-
-            except Exception as e:
-                logger.error(f"放置网格订单失败 {level['grid_id']}: {e}")
-
-        logger.info(f"网格订单放置完成，共 {len(self.grid_orders)} 个订单")
+        # 检查空单触发条件
+        await self.check_short_triggers(current_price)
 
     async def cancel_all_orders(self):
         """取消所有挂单"""
@@ -189,148 +383,29 @@ class HedgeGridStrategy:
                     logger.info(f"取消订单: {order['id']}")
                 except Exception as e:
                     logger.error(f"取消订单失败 {order['id']}: {e}")
-
-            self.grid_orders.clear()
-            self.open_orders.clear()
         except Exception as e:
             logger.error(f"取消挂单失败: {e}")
 
-    async def check_filled_orders(self):
-        """检查已成交订单"""
-        filled_orders = []
-
-        # 检查所有网格订单状态
-        for grid_id, order_info in list(self.grid_orders.items()):
-            try:
-                order = await self.exchange.fetch_order(
-                    order_info['order_id'],
-                    self.symbol
-                )
-
-                if order['status'] == 'closed':
-                    filled_orders.append({
-                        'grid_id': grid_id,
-                        'order': order,
-                        'info': order_info
-                    })
-                    # 从活跃订单中移除
-                    del self.grid_orders[grid_id]
-                    if order_info['order_id'] in self.open_orders:
-                        self.open_orders.remove(order_info['order_id'])
-
-            except Exception as e:
-                logger.error(f"检查订单状态失败 {grid_id}: {e}")
-
-        # 处理已成交订单
-        for filled in filled_orders:
-            await self._handle_filled_order(filled)
-
-    async def _handle_filled_order(self, filled: Dict):
+    async def close_all_positions(self, current_price: Decimal):
         """
-        处理已成交订单
+        平仓所有持仓
 
         Args:
-            filled: 已成交订单信息
+            current_price: 当前价格
         """
-        order_info = filled['info']
-        order_type = order_info['type']
-        grid_id = filled['grid_id']
-        order = filled['order']
+        logger.info("平仓所有持仓...")
 
-        logger.info(f"订单成交: {grid_id} {order_type}")
+        # 平所有多单
+        for position in list(self.long_positions):
+            if position['is_open']:
+                await self._close_long_position(position, current_price, reason="策略停止")
 
-        # 计算盈亏
-        profit = 0
-        if order_type == 'buy':
-            self.buy_count += 1
-            self.current_position += Decimal(str(order_info['amount']))
-        else:
-            self.sell_count += 1
-            self.current_position -= Decimal(str(order_info['amount']))
-            # 卖单可能有盈利（简化计算）
-            profit = order.get('cost', 0) * 0.01  # 假设1%的利润
-            self.total_profit += Decimal(str(profit))
+        # 平所有空单
+        for position in list(self.short_positions):
+            if position['is_open']:
+                await self._close_short_position(position, current_price, reason="策略停止")
 
-        # 风险控制检查
-        if not self._check_risk_control():
-            logger.warning("风险控制触发，停止放置对冲订单")
-            return
-
-        # 更新统计
-        self.trade_count += 1
-        self.daily_trades += 1
-
-        # 更新每日盈亏
-        self.update_daily_stats(Decimal(str(profit)))
-
-        # 记录交易
-        if self.trade_recorder:
-            trade_data = {
-                'symbol': self.symbol,
-                'order_id': order.get('id'),
-                'type': order_type,
-                'grid_id': grid_id,
-                'price': order.get('price'),
-                'amount': order.get('filled'),
-                'cost': order.get('cost'),
-                'profit': profit,
-                'timestamp': order.get('timestamp'),
-                'is_counter': order_info.get('is_counter', False)
-            }
-            self.trade_recorder.record_trade(trade_data)
-
-        # 重新放置对冲订单
-        # 如果是买单成交，在上方放置卖单
-        # 如果是卖单成交，在下方放置买单
-        if order_type == 'buy':
-            # 买单成交，在上方放置卖单
-            sell_price = order_info['price'] * (1 + self.grid_ratio)
-            await self._place_counter_order('sell', sell_price, order_info['amount'])
-        else:
-            # 卖单成交，在下方放置买单
-            buy_price = order_info['price'] * (1 - self.grid_ratio)
-            await self._place_counter_order('buy', buy_price, order_info['amount'])
-
-    async def _place_counter_order(self, order_type: str, price: Decimal, amount: float):
-        """
-        放置对冲订单
-
-        Args:
-            order_type: 订单类型
-            price: 价格
-            amount: 数量
-        """
-        try:
-            if order_type == 'buy':
-                order = await self.exchange.create_limit_buy_order(
-                    self.symbol,
-                    amount,
-                    float(price)
-                )
-                new_grid_id = f"counter_buy_{order['id'][:8]}"
-            else:
-                order = await self.exchange.create_limit_sell_order(
-                    self.symbol,
-                    amount,
-                    float(price)
-                )
-                new_grid_id = f"counter_sell_{order['id'][:8]}"
-
-            # 记录订单
-            self.grid_orders[new_grid_id] = {
-                'order_id': order['id'],
-                'type': order_type,
-                'price': price,
-                'amount': amount,
-                'grid_id': new_grid_id,
-                'is_counter': True
-            }
-            self.open_orders.append(order['id'])
-
-            logger.info(f"放置对冲订单: {new_grid_id} {order_type} @ {price}")
-
-        except Exception as e:
-            logger.error(f"放置对冲订单失败: {e}")
+        logger.info("所有持仓已平仓")
 
     def _check_risk_control(self) -> bool:
         """
@@ -341,7 +416,6 @@ class HedgeGridStrategy:
         """
         # 检查是否暂停
         if self.is_paused:
-            logger.warning("交易已暂停，跳过此操作")
             return False
 
         # 检查每日最大亏损
@@ -356,88 +430,26 @@ class HedgeGridStrategy:
             self.is_paused = True
             return False
 
-        return True
-
-    async def _check_stop_loss(self):
-        """检查止损条件"""
-        try:
-            ticker = await self.exchange.fetch_ticker(self.symbol)
-            current_price = Decimal(str(ticker['last']))
-
-            # 检查跌破止损线
-            if current_price < self.base_price * (1 - self.stop_loss):
-                logger.warning(f"价格跌破止损线! 当前: {current_price}, 基准: {self.base_price}, 止损: {self.stop_loss*100}%")
-                await self._emergency_stop("价格跌破止损线")
-                return True
-
-            # 检查跌破网格最低价
-            if self.grid_levels:
-                lowest_price = self.grid_levels[0]['price']
-                if current_price < lowest_price * (1 - self.grid_ratio):
-                    logger.warning(f"价格跌破网格最低价! 当前: {current_price}, 最低: {lowest_price}")
-                    await self._emergency_stop("价格跌破网格范围")
-                    return True
-
-            return False
-
-        except Exception as e:
-            logger.error(f"检查止损失败: {e}")
-            return False
-
-    async def _check_position_limit(self, amount: float) -> bool:
-        """
-        检查持仓限制
-
-        Args:
-            amount: 订单数量
-
-        Returns:
-            是否允许下单
-        """
-        if self.max_position <= 0:
-            return True  # 不限制
-
-        # 检查是否超过最大持仓
-        if self.current_position + Decimal(str(amount)) > self.max_position:
-            logger.warning(f"达到最大持仓限制! 当前: {self.current_position}, 最大: {self.max_position}")
+        # 检查最大持仓数量
+        total_positions = len(self.long_positions) + len(self.short_positions)
+        if total_positions >= self.max_positions * 2:  # 乘2因为多空各算
+            logger.warning(f"已达到最大持仓数量: {total_positions}/{self.max_positions * 2}")
             return False
 
         return True
 
-    async def _emergency_stop(self, reason: str):
-        """
-        紧急停止
-
-        Args:
-            reason: 停止原因
-        """
-        logger.error(f"触发紧急停止! 原因: {reason}")
-
-        # 取消所有挂单
-        await self.cancel_all_orders()
-
-        # 停止策略
-        self.is_running = False
-
-        logger.info("策略已紧急停止")
-
-    def update_daily_stats(self, profit: Decimal):
+    def update_daily_stats(self, loss: Decimal):
         """
         更新每日统计
 
         Args:
-            profit: 盈亏（正数为盈利，负数为亏损）
+            loss: 亏损金额
         """
-        self.daily_trades += 1
-
-        if profit < 0:
-            self.daily_loss += abs(profit)
-        else:
-            # 如果盈利，减少累计亏损
-            self.daily_loss = max(Decimal('0'), self.daily_loss - profit)
+        if loss > 0:
+            self.daily_loss += loss
 
     def reset_daily_stats(self):
-        """重置每日统计（可用于每日重置）"""
+        """重置每日统计"""
         self.daily_loss = Decimal('0')
         self.daily_trades = 0
         self.is_paused = False
@@ -451,27 +463,54 @@ class HedgeGridStrategy:
             策略状态字典
         """
         ticker = await self.exchange.fetch_ticker(self.symbol)
+        current_price = Decimal(str(ticker['last']))
+
+        # 计算当前持仓盈亏
+        long_pnl = Decimal('0')
+        for position in self.long_positions:
+            if position['is_open']:
+                long_pnl += (current_price - position['entry_price']) * position['amount']
+
+        short_pnl = Decimal('0')
+        for position in self.short_positions:
+            if position['is_open']:
+                short_pnl += (position['entry_price'] - current_price) * position['amount']
+
+        total_pnl = long_pnl + short_pnl
 
         return {
             'symbol': self.symbol,
             'is_running': self.is_running,
-            'current_price': ticker['last'],
-            'base_price': float(self.base_price),
-            'grid_count': len(self.grid_orders),
-            'total_trades': self.trade_count,
-            'buy_count': self.buy_count,
-            'sell_count': self.sell_count,
-            'grid_levels': len(self.grid_levels),
-            'open_orders': len(self.open_orders),
-            'current_position': float(self.current_position),
-            'daily_loss': float(self.daily_loss),
-            'daily_trades': self.daily_trades,
-            'is_paused': self.is_paused,
+            'current_price': float(current_price),
+            'positions': {
+                'long_count': len([p for p in self.long_positions if p['is_open']]),
+                'short_count': len([p for p in self.short_positions if p['is_open']]),
+                'long_pnl': float(long_pnl),
+                'short_pnl': float(short_pnl),
+                'total_pnl': float(total_pnl)
+            },
+            'stats': {
+                'total_trades': self.trade_count,
+                'long_profit_count': self.long_profit_count,
+                'long_loss_count': self.long_loss_count,
+                'short_profit_count': self.short_profit_count,
+                'short_loss_count': self.short_loss_count,
+                'total_profit': float(self.total_profit),
+                'total_loss': float(self.total_loss),
+                'net_profit': float(self.total_profit - self.total_loss)
+            },
+            'daily': {
+                'daily_loss': float(self.daily_loss),
+                'daily_trades': self.daily_trades,
+                'is_paused': self.is_paused
+            },
             'risk_control': {
-                'max_position': float(self.max_position),
-                'stop_loss': float(self.stop_loss),
+                'max_positions': self.max_positions,
                 'max_daily_loss': float(self.max_daily_loss),
-                'max_daily_trades': self.max_daily_trades
+                'max_daily_trades': self.max_daily_trades,
+                'up_threshold': float(self.up_threshold),
+                'down_threshold': float(self.down_threshold),
+                'stop_loss_ratio': float(self.stop_loss_ratio)
             }
         }
 
@@ -481,116 +520,95 @@ class HedgeGridStrategy:
             logger.warning("策略已经在运行中")
             return
 
-        logger.info("启动对冲网格策略...")
+        logger.info("启动双向持仓策略...")
         self.is_running = True
 
-        # 初始化并放置订单
+        # 初始化
         await self.initialize()
-        await self.place_grid_orders()
 
-        logger.info("对冲网格策略启动完成")
+        # 开启初始多空单
+        await self.open_initial_positions()
+
+        logger.info("双向持仓策略启动完成")
 
     async def stop(self):
         """停止策略"""
         if not self.is_running:
             return
 
-        logger.info("停止对冲网格策略...")
+        logger.info("停止双向持仓策略...")
+
+        # 获取当前价格并平仓
+        ticker = await self.exchange.fetch_ticker(self.symbol)
+        current_price = Decimal(str(ticker['last']))
+        await self.close_all_positions(current_price)
+
         self.is_running = False
+        logger.info("双向持仓策略已停止")
 
-        # 取消所有挂单
-        await self.cancel_all_orders()
+    def get_positions_info(self) -> List[Dict]:
+        """
+        获取持仓详情
 
-        logger.info("对冲网格策略已停止")
+        Returns:
+            持仓列表
+        """
+        positions = []
 
-    async def run_loop(self):
-        """策略主循环"""
-        retry_count = 0
-        max_retries = 5
-        retry_delay = 10  # 秒
+        # 多单信息
+        for p in self.long_positions:
+            if p['is_open']:
+                positions.append({
+                    'type': 'long',
+                    'entry_price': float(p['entry_price']),
+                    'amount': float(p['amount']),
+                    'entry_time': p['entry_time']
+                })
 
-        while self.is_running:
-            try:
-                # 止损检查
-                stop_loss_triggered = await self._check_stop_loss()
-                if stop_loss_triggered:
-                    break
+        # 空单信息
+        for p in self.short_positions:
+            if p['is_open']:
+                positions.append({
+                    'type': 'short',
+                    'entry_price': float(p['entry_price']),
+                    'amount': float(p['amount']),
+                    'entry_time': p['entry_time']
+                })
 
-                # 检查已成交订单
-                await self.check_filled_orders()
+        return positions
 
-                # 输出状态
-                status = await self.get_status()
-                logger.info(
-                    f"策略状态 | 价格: {status['current_price']} | "
-                    f"挂单: {status['grid_count']} | "
-                    f"交易: {status['total_trades']} | "
-                    f"买入: {status['buy_count']} | "
-                    f"卖出: {status['sell_count']} | "
-                    f"持仓: {self.current_position} | "
-                    f"日亏: {self.daily_loss} USDT | "
-                    f"日交易: {self.daily_trades}/{self.max_daily_trades}"
-                )
+    async def run_loop(self, check_interval: int = 5):
+        """
+        策略主循环
 
-                # 重置重试计数
-                retry_count = 0
+        Args:
+            check_interval: 检查间隔（秒）
+        """
+        logger.info(f"策略主循环已启动，检查间隔: {check_interval}秒")
 
-                # 等待一段时间
-                await asyncio.sleep(5)
-
-            except Exception as e:
-                retry_count += 1
-                logger.error(f"策略运行异常 (第{retry_count}次): {e}")
-
-                if retry_count >= max_retries:
-                    logger.error(f"达到最大重试次数 ({max_retries})，策略停止")
-                    await self._emergency_stop(f"连续{max_retries}次异常")
-
-                # 指数退避
-                delay = min(retry_delay * (2 ** (retry_count - 1)), 300)  # 最大5分钟
-                logger.info(f"等待 {delay} 秒后重试...")
-                await asyncio.sleep(delay)
-
-                # 尝试恢复订单状态
-                try:
-                    logger.info("尝试恢复订单状态...")
-                    await self._sync_order_status()
-                except Exception as sync_error:
-                    logger.error(f"订单状态同步失败: {sync_error}")
-
-    async def _sync_order_status(self):
-        """同步订单状态"""
-        logger.info("同步订单状态...")
-
-        # 获取交易所当前挂单
         try:
-            open_orders = await self.exchange.fetch_open_orders(self.symbol)
-            open_order_ids = set(order['id'] for order in open_orders)
+            while self.is_running:
+                try:
+                    # 显示策略状态
+                    status = await self.get_status()
+                    logger.info(
+                        f"价格: {status['current_price']} | "
+                        f"多单: {status['positions']['long_count']} | "
+                        f"空单: {status['positions']['short_count']} | "
+                        f"浮盈: {status['positions']['total_pnl']:.2f} | "
+                        f"总交易: {status['stats']['total_trades']}"
+                    )
 
-            # 检查本地记录的订单
-            for grid_id, order_info in list(self.grid_orders.items()):
-                order_id = order_info['order_id']
+                    # 检查持仓触发条件
+                    await self.check_positions()
 
-                if order_id not in open_order_ids:
-                    # 订单可能已成交或取消
-                    logger.warning(f"订单可能已成交: {grid_id} {order_id}")
+                except Exception as e:
+                    logger.error(f"主循环异常: {e}", exc_info=True)
 
-                    # 尝试查询订单状态
-                    try:
-                        order = await self.exchange.fetch_order(order_id, self.symbol)
-                        if order['status'] == 'closed':
-                            # 订单成交，需要处理
-                            logger.info(f"发现已成交订单: {grid_id}")
-                            filled = {
-                                'grid_id': grid_id,
-                                'order': order,
-                                'info': order_info
-                            }
-                            await self._handle_filled_order(filled)
-                    except Exception as e:
-                        logger.error(f"查询订单状态失败 {order_id}: {e}")
+                # 等待下一次检查
+                await asyncio.sleep(check_interval)
 
-            logger.info("订单状态同步完成")
+        except asyncio.CancelledError:
+            logger.info("主循环已取消")
 
-        except Exception as e:
-            logger.error(f"同步订单状态失败: {e}")
+        logger.info("策略主循环已结束")
