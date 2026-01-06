@@ -8,7 +8,8 @@
     "strategy": {
         "symbol": "BTC/USDT",
         "investment": 1000,
-        "position_amount": 0.01,
+        "position_ratio": 0.1,
+        "leverage": 5,
         "up_threshold_type": "atr",
         "up_threshold": 0.02,
         "up_atr_multiplier": 0.9,

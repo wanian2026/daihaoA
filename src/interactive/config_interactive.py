@@ -92,17 +92,33 @@ class ConfigInteractive:
         investment_input = input("请输入投资金额 USDT (默认: 1000): ").strip()
         investment = float(investment_input) if investment_input else 1000
 
-        # 持仓数量（必须手动输入）
+        print("\n【仓位和杠杆配置】")
+        print("-" * 30)
+
+        # 仓位比例
         while True:
-            position_amount_input = input("请输入单笔持仓数量 (必须手动输入，如 0.01): ").strip()
+            position_ratio_input = input("请输入仓位比例 (0.01-1，如0.1表示10%，默认: 0.1): ").strip()
             try:
-                position_amount = float(position_amount_input)
-                if position_amount <= 0:
-                    print("持仓数量必须大于0")
+                position_ratio = float(position_ratio_input) if position_ratio_input else 0.1
+                if position_ratio <= 0 or position_ratio > 1:
+                    print("仓位比例应在0-100%之间")
                     continue
                 break
             except ValueError:
                 print("请输入有效的数字")
+                continue
+
+        # 杠杆倍数
+        while True:
+            leverage_input = input("请输入杠杆倍数 (1-125，默认: 5): ").strip()
+            try:
+                leverage = int(leverage_input) if leverage_input else 5
+                if leverage < 1 or leverage > 125:
+                    print("杠杆倍数应在1-125之间")
+                    continue
+                break
+            except ValueError:
+                print("请输入有效的整数")
                 continue
 
         print("\n【ATR指标配置】")
@@ -207,7 +223,8 @@ class ConfigInteractive:
         self.config_manager.update_strategy_config({
             'symbol': symbol,
             'investment': investment,
-            'position_amount': position_amount,
+            'position_ratio': position_ratio,
+            'leverage': leverage,
             'up_threshold_type': up_threshold_type,
             'up_threshold': up_threshold,
             'up_atr_multiplier': up_atr_multiplier,
@@ -248,7 +265,8 @@ class ConfigInteractive:
         print("【策略配置】")
         print(f"  交易对: {strategy.get('symbol', 'N/A')}")
         print(f"  投资金额: {strategy.get('investment', 0)} USDT")
-        print(f"  单笔持仓数量: {strategy.get('position_amount', 0)}")
+        print(f"  仓位比例: {strategy.get('position_ratio', 0.1) * 100}%")
+        print(f"  杠杆倍数: {strategy.get('leverage', 5)}x")
         print()
 
         # ATR配置

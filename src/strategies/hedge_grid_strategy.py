@@ -36,7 +36,8 @@ class HedgeGridStrategy:
 
         # 策略参数
         self.investment = Decimal(str(config.get('investment', 1000)))  # 投资金额（每个单方向）
-        self.position_amount = Decimal(str(config.get('position_amount', 0)))  # 单笔持仓数量（必须手动设置）
+        self.position_ratio = Decimal(str(config.get('position_ratio', 0.1)))  # 仓位比例（0-1，如0.1表示10%）
+        self.leverage = config.get('leverage', 5)  # 杠杆倍数
 
         # 触发阈值（支持ATR或百分比）
         self.up_threshold_type = config.get('up_threshold_type', 'percent')  # 'percent' 或 'atr'
@@ -73,6 +74,7 @@ class HedgeGridStrategy:
         # 运行状态
         self.is_running = False
         self.current_atr = Decimal('0')  # 当前ATR值
+        self.account_balance = Decimal('0')  # 账户余额
 
         # 统计数据
         self.total_profit = Decimal('0')
@@ -89,9 +91,15 @@ class HedgeGridStrategy:
         """初始化策略"""
         logger.info("开始初始化双向持仓策略...")
 
-        # 检查持仓数量
-        if self.position_amount <= 0:
-            raise ValueError("持仓数量必须手动设置且大于0")
+        # 检查仓位比例和杠杆倍数
+        if self.position_ratio <= 0 or self.position_ratio > 1:
+            raise ValueError(f"仓位比例必须在0-100%之间，当前: {self.position_ratio*100}%")
+
+        if self.leverage < 1 or self.leverage > 125:
+            raise ValueError(f"杠杆倍数必须在1-125之间，当前: {self.leverage}")
+
+        # 获取账户余额
+        await self._fetch_account_balance()
 
         # 计算ATR
         await self._update_atr()
@@ -102,7 +110,9 @@ class HedgeGridStrategy:
         logger.info(f"下跌触发: {self._get_threshold_desc('down')}")
         logger.info(f"止损配置: {self._get_threshold_desc('stop_loss')}")
 
-        logger.info(f"单笔持仓数量: {self.position_amount}")
+        logger.info(f"账户余额: {self.account_balance} USDT")
+        logger.info(f"仓位比例: {self.position_ratio*100}%")
+        logger.info(f"杠杆倍数: {self.leverage}x")
 
         logger.info("双向持仓策略初始化完成")
 
@@ -132,6 +142,49 @@ class HedgeGridStrategy:
             else:
                 return f"{self.stop_loss_ratio * 100}%"
         return "未知"
+
+    async def _fetch_account_balance(self) -> Decimal:
+        """
+        获取账户USDT余额
+
+        Returns:
+            账户余额
+        """
+        try:
+            balance = await self.exchange.fetch_balance()
+            usdt_balance = Decimal(str(balance.get('USDT', {}).get('free', 0)))
+            self.account_balance = usdt_balance
+            logger.info(f"账户余额查询成功: {usdt_balance} USDT")
+            return usdt_balance
+        except Exception as e:
+            logger.error(f"获取账户余额失败: {e}")
+            raise
+
+    def _calculate_position_amount(self, current_price: Decimal) -> Decimal:
+        """
+        根据账户余额、仓位比例和杠杆倍数计算开仓数量
+
+        公式: 开仓数量 = (账户余额 × 仓位比例 × 杠杆倍数) / 当前价格
+
+        Args:
+            current_price: 当前价格
+
+        Returns:
+            开仓数量
+        """
+        # 可用金额 = 账户余额 × 仓位比例
+        available_amount = self.account_balance * self.position_ratio
+
+        # 开仓金额 = 可用金额 × 杠杆倍数
+        position_amount_usdt = available_amount * self.leverage
+
+        # 开仓数量 = 开仓金额 / 当前价格
+        position_amount = position_amount_usdt / current_price
+
+        logger.info(f"开仓数量计算: 账户余额={self.account_balance}, 仓位比例={self.position_ratio*100}%, 杠杆={self.leverage}x, 当前价格={current_price}")
+        logger.info(f"计算结果: 可用金额={available_amount:.2f}, 开仓金额={position_amount_usdt:.2f}, 开仓数量={position_amount:.6f}")
+
+        return position_amount
 
     async def _update_atr(self):
         """计算并更新ATR值"""
@@ -203,22 +256,25 @@ class HedgeGridStrategy:
             price: 当前价格（用于市价单）
         """
         try:
+            # 计算开仓数量（基于账户余额、仓位比例和杠杆倍数）
+            position_amount = self._calculate_position_amount(price)
+
             # 使用市价买入
-            amount = float(self.position_amount)
+            amount = float(position_amount)
             order = await self.exchange.create_market_buy_order(self.symbol, amount)
 
             # 记录多单信息
             long_position = {
                 'order_id': order['id'],
                 'entry_price': Decimal(str(order.get('average', order.get('price', price)))),
-                'amount': self.position_amount,
+                'amount': position_amount,
                 'entry_time': order['timestamp'],
                 'is_open': True,
                 'entry_atr': self.current_atr  # 记录开仓时的ATR
             }
             self.long_positions.append(long_position)
 
-            logger.info(f"开多单成功: 价格 {long_position['entry_price']}, 数量 {long_position['amount']}")
+            logger.info(f"开多单成功: 价格 {long_position['entry_price']}, 数量 {long_position['amount']:.6f}")
 
         except Exception as e:
             logger.error(f"开多单失败: {e}")
@@ -231,32 +287,35 @@ class HedgeGridStrategy:
             price: 当前价格（用于市价单）
         """
         try:
+            # 计算开仓数量（基于账户余额、仓位比例和杠杆倍数）
+            position_amount = self._calculate_position_amount(price)
+
             # 检查是否有足够的币
             base_currency = self.symbol.split('/')[0]
             balance = await self.exchange.fetch_balance()
             available_base = Decimal(str(balance.get(base_currency, {}).get('free', 0)))
 
-            if available_base < self.position_amount:
-                logger.warning(f"可用 {base_currency} 不足，无法开空单: 需要 {self.position_amount}, 可用 {available_base}")
+            if available_base < position_amount:
+                logger.warning(f"可用 {base_currency} 不足，无法开空单: 需要 {position_amount:.6f}, 可用 {available_base:.6f}")
                 # 先开多单，等待上涨后开空单
                 return
 
             # 使用市价卖空（卖出持有的币）
-            amount = float(self.position_amount)
+            amount = float(position_amount)
             order = await self.exchange.create_market_sell_order(self.symbol, amount)
 
             # 记录空单信息
             short_position = {
                 'order_id': order['id'],
                 'entry_price': Decimal(str(order.get('average', order.get('price', price)))),
-                'amount': self.position_amount,
+                'amount': position_amount,
                 'entry_time': order['timestamp'],
                 'is_open': True,
                 'entry_atr': self.current_atr  # 记录开仓时的ATR
             }
             self.short_positions.append(short_position)
 
-            logger.info(f"开空单成功: 价格 {short_position['entry_price']}, 数量 {short_position['amount']}")
+            logger.info(f"开空单成功: 价格 {short_position['entry_price']}, 数量 {short_position['amount']:.6f}")
 
         except Exception as e:
             logger.error(f"开空单失败: {e}")

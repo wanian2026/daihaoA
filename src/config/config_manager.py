@@ -155,9 +155,13 @@ class ConfigManager:
         if investment <= 0:
             errors.append(f"投资金额应大于0，当前: {investment}")
 
-        position_amount = strategy_config.get('position_amount', 0)
-        if position_amount <= 0:
-            errors.append(f"持仓数量必须大于0，当前: {position_amount}")
+        position_ratio = strategy_config.get('position_ratio', 0)
+        if position_ratio <= 0 or position_ratio > 1:
+            errors.append(f"仓位比例应在0-100%之间，当前: {position_ratio*100}%")
+
+        leverage = strategy_config.get('leverage', 1)
+        if leverage < 1 or leverage > 125:
+            errors.append(f"杠杆倍数应在1-125之间，当前: {leverage}")
 
         # 验证ATR参数
         atr_period = strategy_config.get('atr_period', 14)
