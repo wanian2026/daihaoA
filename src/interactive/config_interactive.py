@@ -108,6 +108,25 @@ class ConfigInteractive:
         min_profit_input = input("请输入最小止盈百分比 (默认: 0.2，即0.2%): ").strip()
         min_profit = float(min_profit_input) / 100 if min_profit_input else 0.002
 
+        print("\n【风险控制配置】")
+        print("-" * 30)
+
+        # 止损
+        stop_loss_input = input("请输入止损百分比 (默认: 5，即5%): ").strip()
+        stop_loss = float(stop_loss_input) / 100 if stop_loss_input else 0.05
+
+        # 最大持仓
+        max_position_input = input("请输入最大持仓数量 (0表示不限制，默认: 0): ").strip()
+        max_position = float(max_position_input) if max_position_input else 0
+
+        # 每日最大亏损
+        max_daily_loss_input = input("请输入每日最大亏损 USDT (默认: 100): ").strip()
+        max_daily_loss = float(max_daily_loss_input) if max_daily_loss_input else 100
+
+        # 每日最大交易次数
+        max_daily_trades_input = input("请输入每日最大交易次数 (默认: 100): ").strip()
+        max_daily_trades = int(max_daily_trades_input) if max_daily_trades_input else 100
+
         # 更新配置
         self.config_manager.update_strategy_config({
             'symbol': symbol,
@@ -115,7 +134,11 @@ class ConfigInteractive:
             'grid_count': grid_count,
             'grid_ratio': grid_ratio,
             'investment': investment,
-            'min_profit': min_profit
+            'min_profit': min_profit,
+            'stop_loss': stop_loss,
+            'max_position': max_position,
+            'max_daily_loss': max_daily_loss,
+            'max_daily_trades': max_daily_trades
         })
 
         print("\n✓ 策略配置完成\n")
@@ -146,6 +169,14 @@ class ConfigInteractive:
         print(f"  网格间距: {strategy.get('grid_ratio', 0) * 100}%")
         print(f"  投资金额: {strategy.get('investment', 0)} USDT")
         print(f"  最小止盈: {strategy.get('min_profit', 0) * 100}%")
+        print()
+
+        # 风险控制配置
+        print("【风险控制配置】")
+        print(f"  止损百分比: {strategy.get('stop_loss', 0) * 100}%")
+        print(f"  最大持仓: {strategy.get('max_position', 0) or '不限制'}")
+        print(f"  每日最大亏损: {strategy.get('max_daily_loss', 0)} USDT")
+        print(f"  每日最大交易次数: {strategy.get('max_daily_trades', 0)}")
         print()
 
         print("="*50 + "\n")

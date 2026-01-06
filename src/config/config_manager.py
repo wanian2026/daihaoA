@@ -5,6 +5,7 @@ import json
 import os
 import logging
 from typing import Dict, Any, Optional
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -121,3 +122,78 @@ class ConfigManager:
             return False
 
         return True
+
+    def validate(self) -> tuple[bool, list[str]]:
+        """
+        验证配置
+
+        Returns:
+            (是否有效, 错误消息列表)
+        """
+        errors = []
+
+        # 验证交易所配置
+        exchange_config = self.get_exchange_config()
+
+        if not exchange_config.get('exchange'):
+            errors.append("交易所类型未配置")
+
+        if not exchange_config.get('api_key'):
+            errors.append("API Key未配置")
+
+        if not exchange_config.get('secret'):
+            errors.append("API Secret未配置")
+
+        # 验证策略配置
+        strategy_config = self.get_strategy_config()
+
+        if not strategy_config.get('symbol'):
+            errors.append("交易对未配置")
+
+        # 验证数值范围
+        grid_count = strategy_config.get('grid_count', 0)
+        if grid_count < 2 or grid_count > 50:
+            errors.append(f"网格数量应在2-50之间，当前: {grid_count}")
+
+        grid_ratio = strategy_config.get('grid_ratio', 0)
+        if grid_ratio <= 0 or grid_ratio > 0.5:
+            errors.append(f"网格间距应在0-50%之间，当前: {grid_ratio*100}%")
+
+        investment = strategy_config.get('investment', 0)
+        if investment <= 0:
+            errors.append(f"投资金额应大于0，当前: {investment}")
+
+        # 验证风险控制参数
+        stop_loss = strategy_config.get('stop_loss', 0)
+        if stop_loss <= 0 or stop_loss > 0.5:
+            errors.append(f"止损百分比应在0-50%之间，当前: {stop_loss*100}%")
+
+        max_daily_loss = strategy_config.get('max_daily_loss', 0)
+        if max_daily_loss < 0:
+            errors.append(f"每日最大亏损不能为负数，当前: {max_daily_loss}")
+
+        max_daily_trades = strategy_config.get('max_daily_trades', 0)
+        if max_daily_trades < 0:
+            errors.append(f"每日最大交易次数不能为负数，当前: {max_daily_trades}")
+
+        return (len(errors) == 0, errors)
+
+    def show_validation_errors(self, errors: list[str]):
+        """
+        显示验证错误
+
+        Args:
+            errors: 错误消息列表
+        """
+        if not errors:
+            return
+
+        print("\n" + "="*50)
+        print("配置验证失败")
+        print("="*50 + "\n")
+
+        for i, error in enumerate(errors, 1):
+            print(f"  {i}. {error}")
+
+        print("\n请修正这些错误后重试\n")
+

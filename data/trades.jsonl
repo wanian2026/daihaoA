@@ -1,0 +1,3 @@
+{"symbol": "BTC/USDT", "order_id": "test_001", "type": "buy", "price": 1000, "amount": 0.1, "profit": 10, "timestamp": "2026-01-06T19:57:21.724536"}
+{"symbol": "BTC/USDT", "order_id": "test_001", "type": "buy", "price": 1000, "amount": 0.1, "profit": 0, "timestamp": "2026-01-06T19:57:21.726584"}
+{"symbol": "BTC/USDT", "order_id": "test_002", "type": "sell", "price": 1050, "amount": 0.1, "profit": 50, "timestamp": "2026-01-06T19:57:21.726832"}

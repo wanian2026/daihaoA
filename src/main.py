@@ -2,30 +2,24 @@
 币安对冲网格策略 - 主入口
 """
 import asyncio
-import logging
 import sys
 from config.config_manager import ConfigManager
 from interactive.config_interactive import ConfigInteractive
 from exchanges.binance_exchange import BinanceExchange
 from strategies.hedge_grid_strategy import HedgeGridStrategy
-
-
-def setup_logging():
-    """配置日志"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler('logs/trading.log', encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
+from storage.trade_recorder import TradeRecorder
+from utils.logger import setup_logging, get_logger
 
 
 async def main():
     """主函数"""
-    setup_logging()
-    logger = logging.getLogger(__name__)
+    # 配置日志系统
+    setup_logging(
+        log_file='logs/trading.log',
+        log_level=20  # INFO
+    )
+
+    logger = get_logger(__name__)
 
     print("\n" + "="*50)
     print("币安对冲网格自动化交易系统")
@@ -35,14 +29,34 @@ async def main():
     config_manager = ConfigManager("config/config.json")
 
     # 检查是否已配置
-    if not config_manager.load() or not config_manager.is_configured():
-        print("未检测到有效配置，开始配置...\n")
+    if not config_manager.load():
+        print("配置文件不存在，开始配置...\n")
         config_interactive = ConfigInteractive(config_manager)
         config_interactive.configure()
+
+    # 验证配置
+    is_valid, errors = config_manager.validate()
+    if not is_valid:
+        print("配置验证失败:\n")
+        config_manager.show_validation_errors(errors)
+        print("请重新配置以修正错误\n")
+
+        config_interactive = ConfigInteractive(config_manager)
+        config_interactive.configure()
+
+        # 重新验证
+        is_valid, errors = config_manager.validate()
+        if not is_valid:
+            print("配置验证仍然失败，请检查配置文件")
+            return
 
     # 显示当前配置
     config_interactive = ConfigInteractive(config_manager)
     config_interactive.show_config()
+
+    # 初始化交易记录器
+    trade_recorder = TradeRecorder("data")
+    logger.info("交易记录器已初始化")
 
     # 确认启动
     confirm = input("确认启动策略? (y/n): ").strip().lower()
@@ -75,7 +89,8 @@ async def main():
         strategy = HedgeGridStrategy(
             exchange=exchange.exchange,
             symbol=strategy_config['symbol'],
-            config=strategy_config
+            config=strategy_config,
+            trade_recorder=trade_recorder
         )
 
         # 启动策略
@@ -89,6 +104,20 @@ async def main():
             print("\n\n正在停止策略...")
             await strategy.stop()
             print("策略已停止")
+
+            # 显示交易汇总
+            summary = trade_recorder.get_trade_summary()
+            print("\n" + "="*50)
+            print("交易汇总")
+            print("="*50)
+            print(f"总交易次数: {summary['total_trades']}")
+            print(f"买入次数: {summary['buy_trades']}")
+            print(f"卖出次数: {summary['sell_trades']}")
+            print(f"总交易量: {summary['total_volume']:.4f}")
+            print(f"总盈利: {summary['total_profit']:.2f} USDT")
+            print(f"总亏损: {summary['total_loss']:.2f} USDT")
+            print(f"净盈利: {summary['net_profit']:.2f} USDT")
+            print("="*50 + "\n")
 
     except Exception as e:
         logger.error(f"运行异常: {e}", exc_info=True)
