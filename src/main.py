@@ -3,12 +3,22 @@
 """
 import asyncio
 import sys
+import threading
 from config.config_manager import ConfigManager
 from interactive.config_interactive import ConfigInteractive
 from exchanges.binance_exchange import BinanceExchange
 from strategies.hedge_grid_strategy import HedgeGridStrategy
 from storage.trade_recorder import TradeRecorder
 from utils.logger import setup_logging, get_logger
+import uvicorn
+
+
+async def run_strategy(strategy):
+    """运行策略主循环"""
+    try:
+        await strategy.run_loop()
+    except Exception as e:
+        logger.error(f"策略运行异常: {e}", exc_info=True)
 
 
 async def main():
@@ -68,62 +78,72 @@ async def main():
     exchange_config = config_manager.get_exchange_config()
     strategy_config = config_manager.get_strategy_config()
 
+    # 初始化交易所
+    logger.info("正在连接币安交易所...")
+    exchange = BinanceExchange(
+        api_key=exchange_config['api_key'],
+        secret=exchange_config['secret'],
+        testnet=exchange_config.get('testnet', False)
+    )
+
+    # 测试连接
+    if not await exchange.test_connection():
+        logger.error("币安连接测试失败，请检查API配置")
+        return
+
+    logger.info("币安连接成功")
+
+    # 初始化策略
+    logger.info("正在初始化双向持仓策略...")
+    strategy = HedgeGridStrategy(
+        exchange=exchange.exchange,
+        symbol=strategy_config['symbol'],
+        config=strategy_config,
+        trade_recorder=trade_recorder
+    )
+
+    # 初始化Web界面
+    from web.app import app, init_strategy
+    init_strategy(strategy, trade_recorder, config_manager)
+    logger.info("Web管理界面初始化完成")
+
+    # 启动策略
+    await strategy.start()
+    logger.info("策略已启动\n")
+
+    # 在后台运行策略主循环
+    strategy_task = asyncio.create_task(run_strategy(strategy))
+
+    # 启动Web服务器
+    print("\n" + "="*50)
+    print("Web管理界面已启动")
+    print("="*50)
+    print(f"访问地址: http://localhost:8000")
+    print("="*50 + "\n")
+
     try:
-        # 初始化交易所
-        logger.info("正在连接币安交易所...")
-        exchange = BinanceExchange(
-            api_key=exchange_config['api_key'],
-            secret=exchange_config['secret'],
-            testnet=exchange_config.get('testnet', False)
-        )
+        # 同时运行策略和Web服务器
+        config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+        server = uvicorn.Server(config)
+        await server.serve()
+    except KeyboardInterrupt:
+        print("\n\n正在停止策略...")
+        await strategy.stop()
+        logger.info("策略已停止")
 
-        # 测试连接
-        if not await exchange.test_connection():
-            logger.error("币安连接测试失败，请检查API配置")
-            return
-
-        logger.info("币安连接成功")
-
-        # 初始化策略
-        logger.info("正在初始化双向持仓策略...")
-        strategy = HedgeGridStrategy(
-            exchange=exchange.exchange,
-            symbol=strategy_config['symbol'],
-            config=strategy_config,
-            trade_recorder=trade_recorder
-        )
-
-        # 启动策略
-        await strategy.start()
-        logger.info("策略已启动，按 Ctrl+C 停止\n")
-
-        # 运行策略主循环
-        try:
-            await strategy.run_loop()
-        except KeyboardInterrupt:
-            print("\n\n正在停止策略...")
-            await strategy.stop()
-            print("策略已停止")
-
-            # 显示交易汇总
-            summary = trade_recorder.get_trade_summary()
-            print("\n" + "="*50)
-            print("交易汇总")
-            print("="*50)
-            print(f"总交易次数: {summary['total_trades']}")
-            print(f"买入次数: {summary['buy_trades']}")
-            print(f"卖出次数: {summary['sell_trades']}")
-            print(f"总交易量: {summary['total_volume']:.4f}")
-            print(f"总盈利: {summary['total_profit']:.2f} USDT")
-            print(f"总亏损: {summary['total_loss']:.2f} USDT")
-            print(f"净盈利: {summary['net_profit']:.2f} USDT")
-            print("="*50 + "\n")
-
-    except Exception as e:
-        logger.error(f"运行异常: {e}", exc_info=True)
-    finally:
-        if 'exchange' in locals():
-            await exchange.close()
+        # 显示交易汇总
+        summary = trade_recorder.get_trade_summary()
+        print("\n" + "="*50)
+        print("交易汇总")
+        print("="*50)
+        print(f"总交易次数: {summary['total_trades']}")
+        print(f"买入次数: {summary['buy_trades']}")
+        print(f"卖出次数: {summary['sell_trades']}")
+        print(f"总交易量: {summary['total_volume']:.4f}")
+        print(f"总盈利: {summary['total_profit']:.2f} USDT")
+        print(f"总亏损: {summary['total_loss']:.2f} USDT")
+        print(f"净盈利: {summary['net_profit']:.2f} USDT")
+        print("="*50 + "\n")
 
 
 if __name__ == "__main__":

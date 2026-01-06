@@ -578,12 +578,20 @@ class HedgeGridStrategy:
                     'entry_price': float(entry_price),
                     'exit_price': float(current_price),
                     'amount': float(position['amount']),
-                    'profit': float(profit_amount),
-                    'profit_ratio': float(profit_ratio),
+                    'profit': float(profit_amount_net),  # 使用净利润
+                    'profit_ratio': float(profit_ratio_net),  # 使用净利率
                     'reason': reason,
                     'timestamp': order.get('timestamp')
                 }
                 self.trade_recorder.record_trade(trade_data)
+
+                # 广播交易更新到Web界面
+                try:
+                    from web.app import broadcast_trade_update
+                    await broadcast_trade_update(trade_data)
+                except Exception as e:
+                    # Web模块可能未初始化，忽略错误
+                    pass
 
             # 从持仓中移除
             if position in self.long_positions:
@@ -660,12 +668,20 @@ class HedgeGridStrategy:
                     'entry_price': float(entry_price),
                     'exit_price': float(current_price),
                     'amount': float(position['amount']),
-                    'profit': float(profit_amount),
-                    'profit_ratio': float(profit_ratio),
+                    'profit': float(profit_amount_net),  # 使用净利润
+                    'profit_ratio': float(profit_ratio_net),  # 使用净利率
                     'reason': reason,
                     'timestamp': order.get('timestamp')
                 }
                 self.trade_recorder.record_trade(trade_data)
+
+                # 广播交易更新到Web界面
+                try:
+                    from web.app import broadcast_trade_update
+                    await broadcast_trade_update(trade_data)
+                except Exception as e:
+                    # Web模块可能未初始化，忽略错误
+                    pass
 
             # 从持仓中移除
             if position in self.short_positions:
@@ -943,6 +959,14 @@ class HedgeGridStrategy:
 
                     # 检查持仓触发条件
                     await self.check_positions()
+
+                    # 广播状态更新到Web界面
+                    try:
+                        from web.app import broadcast_status_update
+                        await broadcast_status_update()
+                    except Exception as e:
+                        # Web模块可能未初始化，忽略错误
+                        pass
 
                 except Exception as e:
                     logger.error(f"主循环异常: {e}", exc_info=True)

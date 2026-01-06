@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>币安双向持仓策略管理系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .card {
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.95);
+        }
+        .log-container {
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            padding: 2px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .status-running { color: #10b981; }
+        .status-paused { color: #f59e0b; }
+        .status-stopped { color: #ef4444; }
+    </style>
+</head>
+<body class="min-h-screen gradient-bg">
+    <div class="container mx-auto px-4 py-8">
+        <!-- 标题 -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-white mb-2">币安双向持仓策略管理系统</h1>
+            <p class="text-white/80">实时监控 · 手动干预 · 数据分析</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- 左侧：策略状态 -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- 策略状态卡片 -->
+                <div class="card rounded-xl shadow-lg p-6">
+                    <h2 class="text-xl font-bold mb-4 flex items-center">
+                        <span class="mr-2">📊</span> 策略状态
+                    </h2>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="bg-blue-50 rounded-lg p-4">
+                            <div class="text-sm text-gray-600 mb-1">当前价格</div>
+                            <div class="text-2xl font-bold text-blue-600" id="current-price">--</div>
+                        </div>
+                        <div class="bg-green-50 rounded-lg p-4">
+                            <div class="text-sm text-gray-600 mb-1">ATR值</div>
+                            <div class="text-2xl font-bold text-green-600" id="current-atr">--</div>
+                        </div>
+                        <div class="bg-purple-50 rounded-lg p-4">
+                            <div class="text-sm text-gray-600 mb-1">多单数量</div>
+                            <div class="text-2xl font-bold text-purple-600" id="long-count">--</div>
+                        </div>
+                        <div class="bg-orange-50 rounded-lg p-4">
+                            <div class="text-sm text-gray-600 mb-1">空单数量</div>
+                            <div class="text-2xl font-bold text-orange-600" id="short-count">--</div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-sm text-gray-600 mb-1">多单浮盈</div>
+                            <div class="text-xl font-bold" id="long-pnl">--</div>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-sm text-gray-600 mb-1">空单浮盈</div>
+                            <div class="text-xl font-bold" id="short-pnl">--</div>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-4 col-span-2 md:col-span-1">
+                            <div class="text-sm text-gray-600 mb-1">总浮盈</div>
+                            <div class="text-xl font-bold" id="total-pnl">--</div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 p-4 bg-gray-50 rounded-lg">
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-gray-600">策略运行状态：</span>
+                            <span class="text-lg font-bold" id="is-running">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 持仓列表 -->
+                <div class="card rounded-xl shadow-lg p-6">
+                    <h2 class="text-xl font-bold mb-4 flex items-center">
+                        <span class="mr-2">💼</span> 持仓详情
+                    </h2>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="border-b">
+                                    <th class="text-left py-2 px-3">类型</th>
+                                    <th class="text-left py-2 px-3">入场价格</th>
+                                    <th class="text-left py-2 px-3">数量</th>
+                                    <th class="text-left py-2 px-3">止盈价格</th>
+                                    <th class="text-left py-2 px-3">止损价格</th>
+                                    <th class="text-left py-2 px-3">浮盈</th>
+                                </tr>
+                            </thead>
+                            <tbody id="positions-table">
+                                <tr>
+                                    <td colspan="6" class="text-center py-4 text-gray-500">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 交易历史 -->
+                <div class="card rounded-xl shadow-lg p-6">
+                    <h2 class="text-xl font-bold mb-4 flex items-center">
+                        <span class="mr-2">📈</span> 交易历史
+                    </h2>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="border-b">
+                                    <th class="text-left py-2 px-3">时间</th>
+                                    <th class="text-left py-2 px-3">类型</th>
+                                    <th class="text-left py-2 px-3">入场</th>
+                                    <th class="text-left py-2 px-3">平仓</th>
+                                    <th class="text-left py-2 px-3">盈亏</th>
+                                    <th class="text-left py-2 px-3">原因</th>
+                                </tr>
+                            </thead>
+                            <tbody id="trades-table">
+                                <tr>
+                                    <td colspan="6" class="text-center py-4 text-gray-500">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 实时日志 -->
+                <div class="card rounded-xl shadow-lg p-6">
+                    <h2 class="text-xl font-bold mb-4 flex items-center">
+                        <span class="mr-2">📝</span> 实时日志
+                        <button onclick="clearLogs()" class="ml-auto text-sm bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded">
+                            清空日志
+                        </button>
+                    </h2>
+                    <div class="log-container bg-gray-900 text-green-400 p-4 rounded-lg" id="log-container">
+                        <div class="log-entry">等待连接...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：操作面板 -->
+            <div class="space-y-6">
+                <!-- 手动操作 -->
+                <div class="card rounded-xl shadow-lg p-6">
+                    <h2 class="text-xl font-bold mb-4 flex items-center">
+                        <span class="mr-2">🎮</span> 手动操作
+                    </h2>
+                    <div class="space-y-3">
+                        <button onclick="manualLong()" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg transition">
+                            手动开多
+                        </button>
+                        <button onclick="manualShort()" class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-lg transition">
+                            手动开空
+                        </button>
+                        <button onclick="closeAll()" class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 rounded-lg transition">
+                            平仓所有持仓
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 策略控制 -->
+                <div class="card rounded-xl shadow-lg p-6">
+                    <h2 class="text-xl font-bold mb-4 flex items-center">
+                        <span class="mr-2">⚙️</span> 策略控制
+                    </h2>
+                    <div class="space-y-3">
+                        <button onclick="pauseStrategy()" class="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-lg transition">
+                            暂停策略
+                        </button>
+                        <button onclick="resumeStrategy()" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 rounded-lg transition">
+                            恢复策略
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 统计信息 -->
+                <div class="card rounded-xl shadow-lg p-6">
+                    <h2 class="text-xl font-bold mb-4 flex items-center">
+                        <span class="mr-2">📊</span> 交易统计
+                    </h2>
+                    <div class="space-y-3">
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">总交易次数</span>
+                            <span class="font-bold" id="total-trades">--</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">多单盈利</span>
+                            <span class="font-bold text-green-600" id="long-profit-count">--</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">多单亏损</span>
+                            <span class="font-bold text-red-600" id="long-loss-count">--</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">空单盈利</span>
+                            <span class="font-bold text-green-600" id="short-profit-count">--</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">空单亏损</span>
+                            <span class="font-bold text-red-600" id="short-loss-count">--</span>
+                        </div>
+                        <div class="flex justify-between border-t pt-3">
+                            <span class="text-gray-600">总盈利</span>
+                            <span class="font-bold text-green-600" id="total-profit">--</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">总亏损</span>
+                            <span class="font-bold text-red-600" id="total-loss">--</span>
+                        </div>
+                        <div class="flex justify-between border-t pt-3">
+                            <span class="text-gray-600 font-bold">净盈利</span>
+                            <span class="font-bold text-lg" id="net-profit">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 每日统计 -->
+                <div class="card rounded-xl shadow-lg p-6">
+                    <h2 class="text-xl font-bold mb-4 flex items-center">
+                        <span class="mr-2">📅</span> 每日统计
+                    </h2>
+                    <div class="space-y-3">
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">今日亏损</span>
+                            <span class="font-bold" id="daily-loss">--</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">今日交易次数</span>
+                            <span class="font-bold" id="daily-trades">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // WebSocket连接
+        let ws = null;
+        let reconnectTimer = null;
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function() {
+                console.log('WebSocket连接成功');
+                addLog('WebSocket连接成功', 'info');
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+            };
+
+            ws.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            };
+
+            ws.onerror = function(error) {
+                console.error('WebSocket错误:', error);
+                addLog('WebSocket错误', 'error');
+            };
+
+            ws.onclose = function() {
+                console.log('WebSocket连接关闭');
+                addLog('WebSocket连接关闭，5秒后重连...', 'warning');
+                reconnectTimer = setTimeout(connectWebSocket, 5000);
+            };
+        }
+
+        function handleWebSocketMessage(message) {
+            switch(message.type) {
+                case 'status_update':
+                    updateStatus(message.data);
+                    break;
+                case 'trade_update':
+                    addTrade(message.data);
+                    break;
+                case 'log_update':
+                    addLog(message.data.message, message.data.level);
+                    break;
+            }
+        }
+
+        function updateStatus(status) {
+            // 更新价格
+            document.getElementById('current-price').textContent = status.current_price.toFixed(2);
+            document.getElementById('current-atr').textContent = status.current_atr.toFixed(4);
+
+            // 更新持仓数量
+            document.getElementById('long-count').textContent = status.positions.long_count;
+            document.getElementById('short-count').textContent = status.positions.short_count;
+
+            // 更新浮盈
+            const longPnl = status.positions.long_pnl;
+            const shortPnl = status.positions.short_pnl;
+            const totalPnl = status.positions.total_pnl;
+
+            document.getElementById('long-pnl').textContent = formatPnl(longPnl);
+            document.getElementById('short-pnl').textContent = formatPnl(shortPnl);
+            document.getElementById('total-pnl').textContent = formatPnl(totalPnl);
+
+            // 更新运行状态
+            const isRunning = status.is_running;
+            const isPaused = status.daily.is_paused;
+            const statusEl = document.getElementById('is-running');
+
+            if (!isRunning) {
+                statusEl.textContent = '已停止';
+                statusEl.className = 'text-lg font-bold status-stopped';
+            } else if (isPaused) {
+                statusEl.textContent = '已暂停';
+                statusEl.className = 'text-lg font-bold status-paused';
+            } else {
+                statusEl.textContent = '运行中';
+                statusEl.className = 'text-lg font-bold status-running';
+            }
+
+            // 更新统计
+            const stats = status.stats;
+            document.getElementById('total-trades').textContent = stats.total_trades;
+            document.getElementById('long-profit-count').textContent = stats.long_profit_count;
+            document.getElementById('long-loss-count').textContent = stats.long_loss_count;
+            document.getElementById('short-profit-count').textContent = stats.short_profit_count;
+            document.getElementById('short-loss-count').textContent = stats.short_loss_count;
+            document.getElementById('total-profit').textContent = stats.total_profit.toFixed(2) + ' USDT';
+            document.getElementById('total-loss').textContent = stats.total_loss.toFixed(2) + ' USDT';
+            document.getElementById('net-profit').textContent = formatPnl(stats.net_profit);
+
+            // 更新每日统计
+            const daily = status.daily;
+            document.getElementById('daily-loss').textContent = daily.daily_loss.toFixed(2) + ' USDT';
+            document.getElementById('daily-trades').textContent = daily.daily_trades;
+
+            // 更新持仓列表
+            updatePositions();
+        }
+
+        function formatPnl(value) {
+            const color = value >= 0 ? 'text-green-600' : 'text-red-600';
+            const sign = value >= 0 ? '+' : '';
+            return `<span class="${color}">${sign}${value.toFixed(2)} USDT</span>`;
+        }
+
+        function formatPrice(value) {
+            return value.toFixed(2);
+        }
+
+        async function updatePositions() {
+            try {
+                const response = await fetch('/api/positions');
+                const result = await response.json();
+                const positions = result.data;
+
+                const tableBody = document.getElementById('positions-table');
+                tableBody.innerHTML = '';
+
+                if (positions.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-gray-500">暂无持仓</td></tr>';
+                    return;
+                }
+
+                positions.forEach(pos => {
+                    const type = pos.type === 'long' ? '多单' : '空单';
+                    const typeColor = pos.type === 'long' ? 'text-green-600' : 'text-red-600';
+                    const row = document.createElement('tr');
+                    row.className = 'border-b hover:bg-gray-50';
+                    row.innerHTML = `
+                        <td class="py-2 px-3 ${typeColor}">${type}</td>
+                        <td class="py-2 px-3">${formatPrice(pos.entry_price)}</td>
+                        <td class="py-2 px-3">${pos.amount.toFixed(6)}</td>
+                        <td class="py-2 px-3">--</td>
+                        <td class="py-2 px-3">--</td>
+                        <td class="py-2 px-3">--</td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            } catch (error) {
+                console.error('更新持仓列表失败:', error);
+            }
+        }
+
+        async function loadTrades() {
+            try {
+                const response = await fetch('/api/trades?limit=50');
+                const result = await response.json();
+                const trades = result.data;
+
+                const tableBody = document.getElementById('trades-table');
+                tableBody.innerHTML = '';
+
+                if (trades.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-gray-500">暂无交易记录</td></tr>';
+                    return;
+                }
+
+                trades.forEach(trade => {
+                    const type = trade.type === 'long' ? '多单' : '空单';
+                    const typeColor = trade.type === 'long' ? 'text-green-600' : 'text-red-600';
+                    const pnlColor = trade.profit >= 0 ? 'text-green-600' : 'text-red-600';
+                    const pnlSign = trade.profit >= 0 ? '+' : '';
+
+                    const row = document.createElement('tr');
+                    row.className = 'border-b hover:bg-gray-50';
+                    row.innerHTML = `
+                        <td class="py-2 px-3">${new Date(trade.timestamp * 1000).toLocaleString('zh-CN')}</td>
+                        <td class="py-2 px-3 ${typeColor}">${type}</td>
+                        <td class="py-2 px-3">${formatPrice(trade.entry_price)}</td>
+                        <td class="py-2 px-3">${formatPrice(trade.exit_price)}</td>
+                        <td class="py-2 px-3 ${pnlColor}">${pnlSign}${trade.profit.toFixed(2)}</td>
+                        <td class="py-2 px-3">${trade.reason}</td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            } catch (error) {
+                console.error('加载交易历史失败:', error);
+            }
+        }
+
+        function addTrade(trade) {
+            // 添加新交易到表格顶部
+            const tableBody = document.getElementById('trades-table');
+
+            // 如果是第一条数据，清空"加载中"
+            if (tableBody.querySelector('td')?.textContent === '加载中...') {
+                tableBody.innerHTML = '';
+            }
+
+            const type = trade.type === 'long' ? '多单' : '空单';
+            const typeColor = trade.type === 'long' ? 'text-green-600' : 'text-red-600';
+            const pnlColor = trade.profit >= 0 ? 'text-green-600' : 'text-red-600';
+            const pnlSign = trade.profit >= 0 ? '+' : '';
+
+            const row = document.createElement('tr');
+            row.className = 'border-b hover:bg-gray-50 bg-green-50';
+            row.innerHTML = `
+                <td class="py-2 px-3">${new Date(trade.timestamp * 1000).toLocaleString('zh-CN')}</td>
+                <td class="py-2 px-3 ${typeColor}">${type}</td>
+                <td class="py-2 px-3">${formatPrice(trade.entry_price)}</td>
+                <td class="py-2 px-3">${formatPrice(trade.exit_price)}</td>
+                <td class="py-2 px-3 ${pnlColor}">${pnlSign}${trade.profit.toFixed(2)}</td>
+                <td class="py-2 px-3">${trade.reason}</td>
+            `;
+
+            tableBody.insertBefore(row, tableBody.firstChild);
+
+            // 保持最多50条记录
+            while (tableBody.children.length > 50) {
+                tableBody.removeChild(tableBody.lastChild);
+            }
+        }
+
+        function addLog(message, level = 'info') {
+            const logContainer = document.getElementById('log-container');
+            const timestamp = new Date().toLocaleTimeString('zh-CN');
+
+            const levelColors = {
+                'info': 'text-blue-400',
+                'warning': 'text-yellow-400',
+                'error': 'text-red-400',
+                'success': 'text-green-400'
+            };
+
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            logEntry.innerHTML = `<span class="text-gray-500">[${timestamp}]</span> <span class="${levelColors[level]}">[${level.toUpperCase()}]</span> ${message}`;
+
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+
+            // 保持最多500条日志
+            while (logContainer.children.length > 500) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
+
+        function clearLogs() {
+            const logContainer = document.getElementById('log-container');
+            logContainer.innerHTML = '<div class="log-entry">日志已清空</div>';
+        }
+
+        // API调用函数
+        async function apiCall(url, method = 'POST', data = null) {
+            try {
+                const options = {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                };
+
+                if (data) {
+                    options.body = JSON.stringify(data);
+                }
+
+                const response = await fetch(url, options);
+                const result = await response.json();
+
+                if (result.success) {
+                    addLog(result.message, 'success');
+                    return result;
+                } else {
+                    addLog(result.message || '操作失败', 'error');
+                    throw new Error(result.message || '操作失败');
+                }
+            } catch (error) {
+                addLog(error.message, 'error');
+                throw error;
+            }
+        }
+
+        async function manualLong() {
+            await apiCall('/api/manual/long');
+        }
+
+        async function manualShort() {
+            await apiCall('/api/manual/short');
+        }
+
+        async function closeAll() {
+            if (confirm('确定要平仓所有持仓吗？')) {
+                await apiCall('/api/close/all');
+            }
+        }
+
+        async function pauseStrategy() {
+            await apiCall('/api/pause');
+        }
+
+        async function resumeStrategy() {
+            await apiCall('/api/resume');
+        }
+
+        // 初始化
+        window.onload = function() {
+            connectWebSocket();
+            loadTrades();
+            addLog('系统初始化完成', 'success');
+        };
+    </script>
+</body>
+</html>
