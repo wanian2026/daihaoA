@@ -25,12 +25,30 @@ pip install -r requirements.txt
 python src/main.py
 ```
 
+或使用启动脚本：
+
+```bash
+bash start.sh
+```
+
 首次运行会进入配置向导，按照提示输入：
 - 币安 API Key 和 Secret
 - 交易对（如 BTC/USDT）
 - 网格参数（数量、间距、投资金额等）
 
-### 3. 启动策略
+### 3. 测试连接（可选）
+
+在启动策略前，建议先测试连接：
+
+```bash
+# 基础功能测试（无需API）
+python3 test_connection.py
+
+# 完整测试（需要配置真实API）
+python3 test_balance.py
+```
+
+### 4. 启动策略
 
 配置完成后，确认启动，策略会自动：
 - 连接币安交易所
@@ -97,11 +115,33 @@ python src/main.py
 4. 权限选择：现货交易
 5. 建议绑定IP白名单
 
+## 测试工具
+
+### 测试脚本说明
+
+项目提供了两个测试脚本：
+
+**test_connection.py** - 基础功能测试
+- 测试模块导入
+- 测试配置管理
+- 测试交易所实例创建
+- 无需真实API即可运行
+
+**test_balance.py** - 完整连接测试
+- 测试币安API连接
+- 获取账户余额
+- 获取市场行情
+- 需要配置真实的API Key
+
 ## 常见问题
 
 ### Q: 如何使用测试网络？
 
 A: 配置时选择 "y" 使用测试网络。币安测试网地址：https://testnet.binance.vision/
+
+### Q: 如何测试连接是否正常？
+
+A: 运行测试脚本：`python3 test_balance.py`
 
 ### Q: 如何停止策略？
 
