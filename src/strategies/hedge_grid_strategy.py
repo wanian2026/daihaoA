@@ -535,19 +535,38 @@ class HedgeGridStrategy:
             profit_amount = (current_price - entry_price) * position['amount']
             profit_ratio = (current_price - entry_price) / entry_price
 
+            # 计算交易手续费（开仓+平仓，使用Taker费率0.04%作为保守估计）
+            fee_rate = Decimal('0.0004')  # 0.04%
+            position_value_usdt = position['amount'] * current_price
+            total_fee_usdt = position_value_usdt * fee_rate * 2  # 开仓和平仓各一次
+
+            # 计算净盈亏（扣除手续费）
+            profit_amount_net = profit_amount - total_fee_usdt
+            profit_ratio_net = (current_price - entry_price) / entry_price - (total_fee_usdt / position_value_usdt)
+
             # 更新统计
             self.trade_count += 1
             self.daily_trades += 1
 
             if profit_amount >= 0:
-                self.total_profit += profit_amount
+                self.total_profit += profit_amount_net
                 self.long_profit_count += 1
-                logger.info(f"多单止盈: 入场 {entry_price}, 平仓 {current_price}, 盈利 {profit_amount:.4f} ({profit_ratio*100:.2f}%)")
+                logger.info(
+                    f"多单止盈: 入场 {entry_price}, 平仓 {current_price} | "
+                    f"毛利润 {profit_amount:.4f} USDT ({profit_ratio*100:.2f}%) | "
+                    f"手续费 {total_fee_usdt:.4f} USDT | "
+                    f"净利润 {profit_amount_net:.4f} USDT ({profit_ratio_net*100:.2f}%)"
+                )
             else:
-                self.total_loss += abs(profit_amount)
+                self.total_loss += abs(profit_amount_net)
                 self.long_loss_count += 1
-                self.update_daily_stats(abs(profit_amount))
-                logger.warning(f"多单止损: 入场 {entry_price}, 平仓 {current_price}, 亏损 {profit_amount:.4f} ({profit_ratio*100:.2f}%)")
+                self.update_daily_stats(abs(profit_amount_net))
+                logger.warning(
+                    f"多单止损: 入场 {entry_price}, 平仓 {current_price} | "
+                    f"毛亏损 {abs(profit_amount):.4f} USDT ({profit_ratio*100:.2f}%) | "
+                    f"手续费 {total_fee_usdt:.4f} USDT | "
+                    f"净亏损 {abs(profit_amount_net):.4f} USDT ({profit_ratio_net*100:.2f}%)"
+                )
 
             # 记录交易
             if self.trade_recorder:
@@ -598,19 +617,38 @@ class HedgeGridStrategy:
             profit_amount = (entry_price - current_price) * position['amount']
             profit_ratio = (entry_price - current_price) / entry_price
 
+            # 计算交易手续费（开仓+平仓，使用Taker费率0.04%作为保守估计）
+            fee_rate = Decimal('0.0004')  # 0.04%
+            position_value_usdt = position['amount'] * entry_price
+            total_fee_usdt = position_value_usdt * fee_rate * 2  # 开仓和平仓各一次
+
+            # 计算净盈亏（扣除手续费）
+            profit_amount_net = profit_amount - total_fee_usdt
+            profit_ratio_net = (entry_price - current_price) / entry_price - (total_fee_usdt / position_value_usdt)
+
             # 更新统计
             self.trade_count += 1
             self.daily_trades += 1
 
             if profit_amount >= 0:
-                self.total_profit += profit_amount
+                self.total_profit += profit_amount_net
                 self.short_profit_count += 1
-                logger.info(f"空单止盈: 入场 {entry_price}, 平仓 {current_price}, 盈利 {profit_amount:.4f} ({profit_ratio*100:.2f}%)")
+                logger.info(
+                    f"空单止盈: 入场 {entry_price}, 平仓 {current_price} | "
+                    f"毛利润 {profit_amount:.4f} USDT ({profit_ratio*100:.2f}%) | "
+                    f"手续费 {total_fee_usdt:.4f} USDT | "
+                    f"净利润 {profit_amount_net:.4f} USDT ({profit_ratio_net*100:.2f}%)"
+                )
             else:
-                self.total_loss += abs(profit_amount)
+                self.total_loss += abs(profit_amount_net)
                 self.short_loss_count += 1
-                self.update_daily_stats(abs(profit_amount))
-                logger.warning(f"空单止损: 入场 {entry_price}, 平仓 {current_price}, 亏损 {profit_amount:.4f} ({profit_ratio*100:.2f}%)")
+                self.update_daily_stats(abs(profit_amount_net))
+                logger.warning(
+                    f"空单止损: 入场 {entry_price}, 平仓 {current_price} | "
+                    f"毛亏损 {abs(profit_amount):.4f} USDT ({profit_ratio*100:.2f}%) | "
+                    f"手续费 {total_fee_usdt:.4f} USDT | "
+                    f"净亏损 {abs(profit_amount_net):.4f} USDT ({profit_ratio_net*100:.2f}%)"
+                )
 
             # 记录交易
             if self.trade_recorder:
